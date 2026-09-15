@@ -236,32 +236,35 @@ def run_telegram_bot():
     except Exception as e:
         print(f"Chyba při startu scheduleru: {e}", flush=True)
 
-    offset = 0
     print("Vstupuji do hlavní smyčky Telegram getUpdates...", flush=True)
+    processed_update_ids = set()
 
     while True:
         try:
-            url = f"https://api.telegram.org/bot{cleaned_token}/getUpdates?offset={offset}&timeout=25"
-            response = requests.get(url, timeout=30)
+            url = f"https://api.telegram.org/bot{cleaned_token}/getUpdates?timeout=10"
+            response = requests.get(url, timeout=15)
             data = response.json()
 
             if not data.get("ok"):
                 err_code = data.get("error_code")
                 if err_code == 409:
                     print("Konflikt instancí (409), čekám na uvolnění linky...", flush=True)
-                    time.sleep(10)
+                    time.sleep(5)
                     continue
-                
-                print(f"Telegram API vrátilo chybu: {data}", flush=True)
+                print(f"Telegram API chyba: {data}", flush=True)
                 time.sleep(5)
                 continue
 
             results = data.get("result", [])
-            if results:
-                print(f"Přijato {len(results)} nových aktualizací z Telegramu!", flush=True)
-
             for update in results:
-                offset = update["update_id"] + 1
+                update_id = update["update_id"]
+                if update_id in processed_update_ids:
+                    continue
+                
+                processed_update_ids.add(update_id)
+                if len(processed_update_ids) > 100:
+                    processed_update_ids.pop()
+
                 message = update.get("message")
                 if message:
                     chat_id = message["chat"]["id"]
@@ -270,9 +273,9 @@ def run_telegram_bot():
                     
                     if "text" in message:
                         text_to_process = message["text"]
-                        print(f"Přijat text od uživatele: {text_to_process}", flush=True)
+                        print(f"--> PŘIJAT TEXT OD UŽIVATELE: {text_to_process}", flush=True)
                     elif "voice" in message:
-                        print(f"Přijata hlasová zpráva, stahuji...", flush=True)
+                        print(f"--> Přijata hlasová zpráva, stahuji...", flush=True)
                         send_telegram_message(chat_id, "🎙️ Zpracovávám hlasovku...")
                         text_to_process = transcribe_voice_message(message["voice"]["file_id"])
                         is_voice = True
@@ -284,6 +287,8 @@ def run_telegram_bot():
         except Exception as e:
             print(f"CHYBA V HLAVNÍ SMYČCE: {e}", flush=True)
             time.sleep(5)
+        
+        time.sleep(2)
 
 if __name__ == "__main__":
     run_telegram_bot()
