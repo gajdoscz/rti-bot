@@ -13,7 +13,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 # --- KONFIGURACE ---
 OPENAI_API_KEY = "sk-proj-QbgW5_wigGT2Y3KqvhAiL7U958G3LoOfROfVLxIDwY4AUzV1kE3Qb2V_Qhk-uZ5d1rU-9fqEn5T3BlbkFJ1TQjHXmqAyKLhZQSg9PxfGvOtNz9ueIvVMbA4909CFBZJNiwVkxVJF2Xn4L9U8sJhM-d6GjUA"
 GMAIL_USER = "gajdoscz@gmail.com"
-GMAIL_APP_PASSWORD = "smwactngwgmfmdog"
+GMAIL_APP_PASSWORD = "ueolepkubctpkdqn"
 TELEGRAM_BOT_TOKEN = "8628786539:AAHerCp6jaMnc95G4Dab82QK6VjFwxMqFCA"
 
 ai_client = OpenAI(api_key=OPENAI_API_KEY)
