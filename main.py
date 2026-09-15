@@ -243,7 +243,7 @@ def run_telegram_bot():
                             is_voice = True
                         
                         if text_to_process:
-                            print( zpracování: {text_to_process}, flush=True)
+                            print(f"Zpracovávám: {text_to_process}", flush=True)
                             process_command(text_to_process, chat_id, is_voice=is_voice)
         except Exception as e:
             print(f"Chyba smyčky: {e}", flush=True)
