@@ -11,8 +11,7 @@ import io
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # --- KONFIGURACE ---
-OPENAI_API_KEY = "sk-proj-10tudiMtXkG_qE57ZnndC12-d7c4ipi9CUJ3o4jydsOzswk0i-YNncjZbrRIV7_xePrUfT1MbT3IbKFJZ-v1K4pmhSE51T1DFzhVhuXa6KSkXgStPKbVLPe-1KMtLc9a"
-
+OPENAI_API_KEY = "sk-proj-QbgW5_wigGT2Y3KqvhAiL7U958G3LoOfROfVLxIDwY4AUzV1kE3Qb2V_Qhk-uZ5d1rU-9fqEn5T3BlbkFJ1TQjHXmqAyKLhZQSg9PxfGvOtNz9ueIvVMbA4909CFBZJNiwVkxVJF2Xn4L9U8sJhM-d6GjUA"
 GMAIL_USER = "gajdoscz@gmail.com"
 GMAIL_APP_PASSWORD = "smwactngwgmfmdog"
 TELEGRAM_BOT_TOKEN = "8628786539:AAHerCp6jaMnc95G4Dab82QK6VjFwxMqFCA"
@@ -155,9 +154,12 @@ def process_command(command, chat_id, is_voice=False):
     cmd = command.strip().lower()
     print(f"Zpracovávám příkaz: {cmd}", flush=True)
     
-    nums = re.findall(r'\d+', cmd)
-    days = int(nums[0]) if nums else 1
-    if days > 90: days = 90
+    if "help" in cmd or "pomoc" in cmd:
+        send_telegram_message(chat_id, "Příkazy: s1-s90, r1-r90, pondeli, připomeň [text], úkoly")
+        if is_voice:
+            audio = text_to_speech("Tady je nápověda k příkazům.")
+            if audio: send_telegram_voice(chat_id, audio)
+        return
 
     if "pripomen" in cmd or "úkol" in cmd or "zapis" in cmd:
         SAVED_REMINDERS.append(command)
@@ -175,6 +177,10 @@ def process_command(command, chat_id, is_voice=False):
             audio = text_to_speech(reply)
             if audio: send_telegram_voice(chat_id, audio)
         return
+
+    nums = re.findall(r'\d+', cmd)
+    days = int(nums[0]) if nums else 1
+    if days > 90: days = 90
 
     if "pondeli" in cmd or "weekly" in cmd:
         send_telegram_message(chat_id, f"📅 Generuji pondělní report za {days} dnů...")
@@ -200,8 +206,6 @@ def process_command(command, chat_id, is_voice=False):
             if audio: send_telegram_voice(chat_id, audio)
         return
 
-    elif "help" in cmd or "pomoc" in cmd:
-        send_telegram_message(chat_id, "Příkazy: s1-s90, r1-r90, pondeli, připomeň [text], úkoly")
     else:
         send_telegram_message(chat_id, f"Neznámý příkaz: {cmd}. Napiš 'help'.")
 
