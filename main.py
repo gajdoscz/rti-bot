@@ -13,7 +13,8 @@ import socket
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # --- KONFIGURACE ---
-OPENAI_API_KEY = "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"
+# Klíč se bezpečně načítá z proměnných prostředí Renderu, aby ho GitHub nezablokoval
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 GMAIL_USER = "gajdoscz@gmail.com"
 GMAIL_APP_PASSWORD = "ueolepkubctpkdqn"
 TELEGRAM_BOT_TOKEN = "8628786539:AAEjHL6fVdqkRHD63IEPerKvRLLZE0YnXT0"
@@ -34,7 +35,6 @@ def fetch_gmail_messages(days=1, keyword=None):
         mail.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         mail.select("inbox")
 
-        # Pro jistotu vezmeme maily od zadaného počtu dnů zpětně (min. 2 dny pro 24h okno)
         search_days = max(days, 2)
         since_date = (datetime.now() - timedelta(days=search_days)).strftime("%d-%b-%Y")
         search_criteria = f'(SINCE "{since_date}")'
@@ -62,7 +62,6 @@ def fetch_gmail_messages(days=1, keyword=None):
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
                     
-                    # Kontrola přesného času z hlavičky e-mailu (posledních 24h)
                     msg_date_header = msg.get("Date")
                     if msg_date_header:
                         try:
@@ -224,7 +223,6 @@ def process_command(command, chat_id, is_voice=False):
         return
 
     elif "r" in cmd:
-        # Pokud je zadáno 1 (např. r1), vezmeme posledních 24 hodin, jinak zadaný počet celých dnů
         target_days = 1 if days == 1 else days
         send_telegram_message(chat_id, f"🚆 Generuji provozní report Railtrans...")
         emails = fetch_gmail_messages(days=target_days)
