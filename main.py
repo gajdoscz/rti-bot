@@ -13,7 +13,6 @@ import socket
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # --- KONFIGURACE ---
-# Klíč se bezpečně načítá z proměnných prostředí Renderu, aby ho GitHub nezablokoval
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 GMAIL_USER = "gajdoscz@gmail.com"
 GMAIL_APP_PASSWORD = "ueolepkubctpkdqn"
@@ -28,7 +27,6 @@ def fetch_gmail_messages(days=1, keyword=None):
     print(f"Stahuji e-maily z Gmailu (časové okno: {days} dnů, filtr na posledních 24h)...", flush=True)
     emails_data = []
     try:
-        # Nastavení pevného timeoutu 15 sekund na socket
         socket.setdefaulttimeout(15)
 
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
@@ -96,7 +94,7 @@ def fetch_gmail_messages(days=1, keyword=None):
                     emails_data.append(f"Od: {sender}\nPředmět: {subject}\nObsah: {body[:500]}...\n---")
 
         mail.logout()
-        print(f"Úspěšně filtrováno: {matched_count} e-mailů za posledních 24h.", flush=True)
+        print(f"Úspěšně filtrováno: {matched_count} e-mailů za posledních 24h. Předávám OpenAI...", flush=True)
         return emails_data
     except Exception as e:
         print(f"Chyba při IMAP stahování: {e}", flush=True)
@@ -104,27 +102,30 @@ def fetch_gmail_messages(days=1, keyword=None):
 
 def analyze_with_openai(emails_text, mode_description):
     print("Odesílám data do OpenAI, čekám na vygenerování reportu...", flush=True)
+    
+    # Změněný, maximálně věcný a nekompromisní prompt
     prompt = f"""
-Jsi hlavní výkonný asistent a strategický poradce vrcholového manažera. Proveď analýzu propojující interní svět RTI s vnějším tržním prostředím.
+Jsi ostrý operační asistent vrcholového manažera. Dej mi stručný, věcný a zcela konkrétní přehled za posledních 24 hodin.
+Žádné obecné fráze, úvahy ani "referáty". Pište přímo k věci formou úderných odrážek.
 Režim: {mode_description}
 
 E-maily za posledních 24 hodin:
 {'\n'.join(emails_text)}
 
-Výstup rozdělen do sekcí:
-1. **🏢 Svět RTI / Interní operativa**
-2. **📈 Tržní kontext & Externí vlivy**
-3. **🏠 Soukromé záležitosti**
-4. **⚠️ Strategická rizika a urgentní upozornění**
+Struktura výstupu:
+1. **🚨 Akutní problémy & Hasiči** (Co hoří? Kdo co reklamuje, kde jsou zpoždění, výpadky nebo problémy vyžadující zásah?)
+2. **🚆 Provoz & Kdo s kým co řešil** (Konkrétní partneři, zákazníci, dispečeři, čísla vlaků/zakázek a shrnutí toho, na čem se domluvili nebo co se řeší)
+3. **📈 Obchod & Trh** (Reálné poptávky, nabídky, změny cen nebo smluvní věci)
+4. **🏠 Soukromé & Ostatní** (Pokud dorazilo něco osobního)
 """
     try:
         response = ai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Jsi strategický asistent pro management."},
+                {"role": "system", "content": "Jsi věcný a nekompromisní asistent pro exekutivní management. Žádná vata."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3,
+            temperature=0.2,
             max_tokens=1500
         )
         print("Analýza od OpenAI byla úspěšně dokončena.", flush=True)
@@ -216,25 +217,25 @@ def process_command(command, chat_id, is_voice=False):
     if days > 90: days = 90
 
     if "pondeli" in cmd or "weekly" in cmd:
-        send_telegram_message(chat_id, f"📅 Generuji pondělní report za {days} dnů...")
+        send_telegram_message(chat_id, f"📅 Generuji týdenní přehled za {days} dnů...")
         emails = fetch_gmail_messages(days=days)
-        analysis = analyze_with_openai(emails or ["Žádné maily."], "Pondělní reporting RTI & Trh.")
+        analysis = analyze_with_openai(emails or ["Žádné maily."], "Týdenní přehled operativy.")
         send_telegram_message(chat_id, analysis[:4000])
         return
 
     elif "r" in cmd:
         target_days = 1 if days == 1 else days
-        send_telegram_message(chat_id, f"🚆 Generuji provozní report Railtrans...")
+        send_telegram_message(chat_id, f"🚆 Generuji provozní přehled Railtrans...")
         emails = fetch_gmail_messages(days=target_days)
-        analysis = analyze_with_openai(emails or ["Žádné maily."], "Provozní přehled Railtrans.")
+        analysis = analyze_with_openai(emails or ["Žádné maily."], "Provozní přehled Railtrans - kdo s kým co řešil.")
         send_telegram_message(chat_id, analysis[:4000])
         return
 
     elif "s" in cmd or days > 0:
         target_days = 1 if days == 1 else days
-        send_telegram_message(chat_id, f"🔍 Generuji exekutivní report...")
+        send_telegram_message(chat_id, f"🔍 Generuji exekutivní přehled za 24h...")
         emails = fetch_gmail_messages(days=target_days)
-        analysis = analyze_with_openai(emails or ["Žádné maily."], "Exekutivní přehled RTI, Trh & Soukromé.")
+        analysis = analyze_with_openai(emails or ["Žádné maily."], "Exekutivní operační přehled.")
         send_telegram_message(chat_id, analysis[:4000])
         if is_voice:
             audio = text_to_speech("Exekutivní souhrn je hotový.")
