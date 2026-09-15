@@ -13,7 +13,7 @@ import socket
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # --- KONFIGURACE ---
-OPENAI_API_KEY = "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"
+OPENAI_API_KEY = "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"
 GMAIL_USER = "gajdoscz@gmail.com"
 GMAIL_APP_PASSWORD = "ueolepkubctpkdqn"
 TELEGRAM_BOT_TOKEN = "8628786539:AAEjHL6fVdqkRHD63IEPerKvRLLZE0YnXT0"
