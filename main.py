@@ -8,6 +8,7 @@ from openai import OpenAI
 import requests
 import re
 import io
+import socket
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # --- KONFIGURACE ---
@@ -25,6 +26,9 @@ def fetch_gmail_messages(days=1, keyword=None):
     print(f"Stahuji e-maily z Gmailu (Dny: {days})...", flush=True)
     emails_data = []
     try:
+        # Nastavení pevného timeoutu, aby IMAP nikdy nevisel donekonečna
+        socket.setdefaulttimeout(15)
+
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         mail.select("inbox")
@@ -36,9 +40,12 @@ def fetch_gmail_messages(days=1, keyword=None):
 
         status, messages = mail.search(None, search_criteria)
         if status != "OK":
+            print("Vyhledávání v Gmailu nevrátilo OK statut.", flush=True)
             return []
 
         email_ids = messages[0].split()
+        print(f"Nalezeno {len(email_ids)} e-mailů k zpracování.", flush=True)
+
         for e_id in email_ids[-40:]:
             res, msg_data = mail.fetch(e_id, "(RFC822)")
             if res != "OK":
@@ -71,7 +78,7 @@ def fetch_gmail_messages(days=1, keyword=None):
         mail.logout()
         return emails_data
     except Exception as e:
-        print(f"Chyba při IMAP: {e}", flush=True)
+        print(f"Chyba při IMAP stahování: {e}", flush=True)
         return []
 
 def analyze_with_openai(emails_text, mode_description):
