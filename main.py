@@ -213,12 +213,17 @@ def automated_monday_job():
     send_telegram_message(LAST_CHAT_ID, analysis[:4000])
 
 def run_telegram_bot():
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(automated_monday_job, 'cron', day_of_week='mon', hour=9, minute=0)
-    scheduler.start()
+    print("Inicializuji APScheduler...", flush=True)
+    try:
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(automated_monday_job, 'cron', day_of_week='mon', hour=9, minute=0)
+        scheduler.start()
+        print("Scheduler úspěšně spuštěn.", flush=True)
+    except Exception as e:
+        print(f"Chyba při startu scheduleru: {e}", flush=True)
 
     offset = 0
-    print("Bot spuštěn a naslouchá...", flush=True)
+    print("Vstupuji do hlavní smyčky Telegram getUpdates...", flush=True)
 
     while True:
         try:
@@ -226,27 +231,38 @@ def run_telegram_bot():
             response = requests.get(url, timeout=30)
             data = response.json()
 
-            if data.get("ok"):
-                for update in data.get("result", []):
-                    offset = update["update_id"] + 1
-                    message = update.get("message")
-                    if message:
-                        chat_id = message["chat"]["id"]
-                        text_to_process = None
-                        is_voice = False
-                        
-                        if "text" in message:
-                            text_to_process = message["text"]
-                        elif "voice" in message:
-                            send_telegram_message(chat_id, "🎙️ Zpracovávám hlasovku...")
-                            text_to_process = transcribe_voice_message(message["voice"]["file_id"])
-                            is_voice = True
-                        
-                        if text_to_process:
-                            print(f"Zpracovávám: {text_to_process}", flush=True)
-                            process_command(text_to_process, chat_id, is_voice=is_voice)
+            if not data.get("ok"):
+                print(f"Telegram API vrátilo chybu: {data}", flush=True)
+                time.sleep(5)
+                continue
+
+            results = data.get("result", [])
+            if results:
+                print(f"Přijato {len(results)} nových aktualizací z Telegramu!", flush=True)
+
+            for update in results:
+                offset = update["update_id"] + 1
+                message = update.get("message")
+                if message:
+                    chat_id = message["chat"]["id"]
+                    text_to_process = None
+                    is_voice = False
+                    
+                    if "text" in message:
+                        text_to_process = message["text"]
+                        print(f"Přijat text od uživatele: {text_to_process}", flush=True)
+                    elif "voice" in message:
+                        print(f"Přijata hlasová zpráva, stahuji...", flush=True)
+                        send_telegram_message(chat_id, "🎙️ Zpracovávám hlasovku...")
+                        text_to_process = transcribe_voice_message(message["voice"]["file_id"])
+                        is_voice = True
+                    
+                    if text_to_process:
+                        print(f"Spouštím process_command pro: {text_to_process}", flush=True)
+                        process_command(text_to_process, chat_id, is_voice=is_voice)
+
         except Exception as e:
-            print(f"Chyba smyčky: {e}", flush=True)
+            print(f"CHYBA V HLAVNÍ SMYČCE: {e}", flush=True)
             time.sleep(5)
 
 if __name__ == "__main__":
