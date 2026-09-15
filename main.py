@@ -306,3 +306,4 @@ def run_telegram_bot():
 
 if __name__ == "__main__":
     run_telegram_bot()
+    print("DEBUG: Jsem na konci souboru a spouštím hlavní smyčku", flush=True)
