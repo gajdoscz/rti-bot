@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import imaplib
 import email
 from email.header import decode_header
+import email.utils
 from openai import OpenAI
 import requests
 import re
@@ -23,17 +24,19 @@ SAVED_REMINDERS = []
 LAST_CHAT_ID = None
 
 def fetch_gmail_messages(days=1, keyword=None):
-    print(f"Stahuji e-maily z Gmailu (Dny: {days})...", flush=True)
+    print(f"Stahuji e-maily z Gmailu (časové okno: {days} dnů, filtr na posledních 24h)...", flush=True)
     emails_data = []
     try:
-        # Nastavení pevného timeoutu, aby IMAP nikdy nevisel donekonečna
+        # Nastavení pevného timeoutu 15 sekund na socket
         socket.setdefaulttimeout(15)
 
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         mail.select("inbox")
 
-        since_date = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
+        # Pro jistotu vezmeme maily od zadaného počtu dnů zpětně (min. 2 dny pro 24h okno)
+        search_days = max(days, 2)
+        since_date = (datetime.now() - timedelta(days=search_days)).strftime("%d-%b-%Y")
         search_criteria = f'(SINCE "{since_date}")'
         if keyword:
             search_criteria = f'(SINCE "{since_date}" TEXT "{keyword}")'
@@ -44,9 +47,13 @@ def fetch_gmail_messages(days=1, keyword=None):
             return []
 
         email_ids = messages[0].split()
-        print(f"Nalezeno {len(email_ids)} e-mailů k zpracování.", flush=True)
+        total_found = len(email_ids)
+        print(f"Nalezeno {total_found} kandidátů, aplikuji přísný filtr na posledních 24 hodin...", flush=True)
 
-        for e_id in email_ids[-40:]:
+        cutoff_time = datetime.now() - timedelta(hours=24)
+        matched_count = 0
+
+        for idx, e_id in enumerate(email_ids):
             res, msg_data = mail.fetch(e_id, "(RFC822)")
             if res != "OK":
                 continue
@@ -54,6 +61,20 @@ def fetch_gmail_messages(days=1, keyword=None):
             for response_part in msg_data:
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
+                    
+                    # Kontrola přesného času z hlavičky e-mailu (posledních 24h)
+                    msg_date_header = msg.get("Date")
+                    if msg_date_header:
+                        try:
+                            msg_dt = email.utils.parsedate_to_datetime(msg_date_header)
+                            if msg_dt.tzinfo is not None:
+                                msg_dt = msg_dt.astimezone().replace(tzinfo=None)
+                            if msg_dt < cutoff_time:
+                                continue
+                        except Exception:
+                            pass
+
+                    matched_count += 1
                     subject_header = decode_header(msg["Subject"] or "Bez předmětu")
                     subject, encoding = subject_header[0]
                     if isinstance(subject, bytes):
@@ -76,17 +97,19 @@ def fetch_gmail_messages(days=1, keyword=None):
                     emails_data.append(f"Od: {sender}\nPředmět: {subject}\nObsah: {body[:500]}...\n---")
 
         mail.logout()
+        print(f"Úspěšně filtrováno: {matched_count} e-mailů za posledních 24h.", flush=True)
         return emails_data
     except Exception as e:
         print(f"Chyba při IMAP stahování: {e}", flush=True)
         return []
 
 def analyze_with_openai(emails_text, mode_description):
+    print("Odesílám data do OpenAI, čekám na vygenerování reportu...", flush=True)
     prompt = f"""
 Jsi hlavní výkonný asistent a strategický poradce vrcholového manažera. Proveď analýzu propojující interní svět RTI s vnějším tržním prostředím.
 Režim: {mode_description}
 
-E-maily:
+E-maily za posledních 24 hodin:
 {'\n'.join(emails_text)}
 
 Výstup rozdělen do sekcí:
@@ -105,8 +128,10 @@ Výstup rozdělen do sekcí:
             temperature=0.3,
             max_tokens=1500
         )
+        print("Analýza od OpenAI byla úspěšně dokončena.", flush=True)
         return response.choices[0].message.content
     except Exception as e:
+        print(f"Chyba při OpenAI: {e}", flush=True)
         return f"Chyba při OpenAI: {e}"
 
 def transcribe_voice_message(file_id):
@@ -138,10 +163,12 @@ def text_to_speech(text):
         return None
 
 def send_telegram_message(chat_id, text):
+    print("Odesílám hotovou zprávu zpět do Telegramu...", flush=True)
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=15)
+        print("Zpráva byla úspěšně doručena do Telegramu.", flush=True)
     except Exception as e:
         print(f"Chyba sendMessage: {e}", flush=True)
 
@@ -197,15 +224,18 @@ def process_command(command, chat_id, is_voice=False):
         return
 
     elif "r" in cmd:
-        send_telegram_message(chat_id, f"🚆 Generuji provozní report Railtrans za {days} dnů...")
-        emails = fetch_gmail_messages(days=days)
+        # Pokud je zadáno 1 (např. r1), vezmeme posledních 24 hodin, jinak zadaný počet celých dnů
+        target_days = 1 if days == 1 else days
+        send_telegram_message(chat_id, f"🚆 Generuji provozní report Railtrans...")
+        emails = fetch_gmail_messages(days=target_days)
         analysis = analyze_with_openai(emails or ["Žádné maily."], "Provozní přehled Railtrans.")
         send_telegram_message(chat_id, analysis[:4000])
         return
 
     elif "s" in cmd or days > 0:
-        send_telegram_message(chat_id, f"🔍 Generuji exekutivní report za {days} dnů...")
-        emails = fetch_gmail_messages(days=days)
+        target_days = 1 if days == 1 else days
+        send_telegram_message(chat_id, f"🔍 Generuji exekutivní report...")
+        emails = fetch_gmail_messages(days=target_days)
         analysis = analyze_with_openai(emails or ["Žádné maily."], "Exekutivní přehled RTI, Trh & Soukromé.")
         send_telegram_message(chat_id, analysis[:4000])
         if is_voice:
