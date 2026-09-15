@@ -239,6 +239,12 @@ def run_telegram_bot():
             data = response.json()
 
             if not data.get("ok"):
+                err_code = data.get("error_code")
+                if err_code == 409:
+                    print("Konflikt instancí (409), čekám na uvolnění linky...", flush=True)
+                    time.sleep(10)
+                    continue
+                
                 print(f"Telegram API vrátilo chybu: {data}", flush=True)
                 time.sleep(5)
                 continue
