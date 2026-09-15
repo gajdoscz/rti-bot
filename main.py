@@ -22,7 +22,6 @@ LAST_USER_ACTIVITY_DATE = None
 
 def fetch_mails(days=1, mode="railtrans", keyword=None):
     print(f"Stahuji baily z Gmailu (Režim: {mode}, Dny: {days}, Klíčové slovo: {keyword})...")
-    # Zde pokračuje tvá logika pro stahování mailů...
     pass
 
 def send_telegram_message(chat_id, text):
@@ -41,11 +40,10 @@ def send_telegram_message(chat_id, text):
 
 def process_command(command, chat_id, is_voice=False):
     cmd = command.strip().lower()
-    print(ുമായി f"Zpracovávám příkaz: {cmd}")
+    print(f"Zpracovávám příkaz: {cmd}")
     
     if cmd == "s1" or "s1" in cmd:
         send_telegram_message(chat_id, "Spouštím analýzu e-mailů (s1)...")
-        # Zde se spustí tvoje analýza mailů
     elif cmd == "help":
         send_telegram_message(chat_id, "Dostupné příkazy:\n- s1: Spuštění analýzy e-mailů")
     else:
@@ -53,9 +51,8 @@ def process_command(command, chat_id, is_voice=False):
 
 def run_telegram_bot():
     offset = 0
-    print("🤖 Zjišťuji aktuální offset pro Telegram...")
+    print("Zjišťuji aktuální offset pro Telegram...")
     
-    # Získání počátečního offsetu, aby se ignorovaly staré zprávy
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset=-1"
         resp = requests.get(url, timeout=10).json()
@@ -64,7 +61,7 @@ def run_telegram_bot():
     except Exception as e:
         print(f"Poznámka při startovním offsetu: {e}")
 
-    print(f"🤖 Telegram bot běží a naslouchá příkazům (Startovní offset: {offset})...", flush=True)
+    print(f"Telegram bot běží a naslouchá příkazům (Startovní offset: {offset})...", flush=True)
 
     while True:
         try:
