@@ -22,9 +22,10 @@ ai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 SAVED_REMINDERS = []
 LAST_CHAT_ID = None
+LAST_USER_ACTIVITY_DATE = None  # Sledování aktivity pro denní 18:00 report
 
-def fetch_gmail_messages(days=1, keyword=None):
-    print(f"Stahuji e-maily z Gmailu (časové okno: {days} dnů, filtr na posledních 24h)...", flush=True)
+def fetch_gmail_messages(days=1, keyword=None, exclude_keyword=None):
+    print(f"Stahuji e-maily z Gmailu (okno: {days} dnů, klíčové slovo: {keyword}, exkluze: {exclude_keyword})...", flush=True)
     emails_data = []
     try:
         socket.setdefaulttimeout(15)
@@ -35,9 +36,11 @@ def fetch_gmail_messages(days=1, keyword=None):
 
         search_days = max(days, 2)
         since_date = (datetime.now() - timedelta(days=search_days)).strftime("%d-%b-%Y")
-        search_criteria = f'(SINCE "{since_date}")'
+        
         if keyword:
             search_criteria = f'(SINCE "{since_date}" TEXT "{keyword}")'
+        else:
+            search_criteria = f'(SINCE "{since_date}")'
 
         status, messages = mail.search(None, search_criteria)
         if status != "OK":
@@ -46,9 +49,9 @@ def fetch_gmail_messages(days=1, keyword=None):
 
         email_ids = messages[0].split()
         total_found = len(email_ids)
-        print(f"Nalezeno {total_found} kandidátů, aplikuji přísný filtr na posledních 24 hodin...", flush=True)
+        print(f"Nalezeno {total_found} kandidátů, aplikuji filtr...", flush=True)
 
-        cutoff_time = datetime.now() - timedelta(hours=24)
+        cutoff_time = datetime.now() - timedelta(days=days)
         matched_count = 0
 
         for idx, e_id in enumerate(email_ids):
@@ -71,13 +74,18 @@ def fetch_gmail_messages(days=1, keyword=None):
                         except Exception:
                             pass
 
+                    sender = msg.get("From", "")
+                    
+                    # Exkluze (např. pro 's' vyřadíme @railtrans.eu)
+                    if exclude_keyword and exclude_keyword.lower() in sender.lower():
+                        continue
+
                     matched_count += 1
                     subject_header = decode_header(msg["Subject"] or "Bez předmětu")
                     subject, encoding = subject_header[0]
                     if isinstance(subject, bytes):
                         subject = subject.decode(encoding or "utf-8", errors="ignore")
                     
-                    sender = msg.get("From", "Neznámý")
                     body = ""
                     if msg.is_multipart():
                         for part in msg.walk():
@@ -91,10 +99,10 @@ def fetch_gmail_messages(days=1, keyword=None):
                         if payload:
                             body = payload.decode("utf-8", errors="ignore")
 
-                    emails_data.append(f"Od: {sender}\nPředmět: {subject}\nObsah: {body[:500]}...\n---")
+                    emails_data.append(f"Od: {sender}\nPředmět: {subject}\nObsah: {body[:600]}...\n---")
 
         mail.logout()
-        print(f"Úspěšně filtrováno: {matched_count} e-mailů za posledních 24h. Předávám OpenAI...", flush=True)
+        print(f"Úspěšně filtrováno: {matched_count} e-mailů.", flush=True)
         return emails_data
     except Exception as e:
         print(f"Chyba při IMAP stahování: {e}", flush=True)
@@ -102,31 +110,23 @@ def fetch_gmail_messages(days=1, keyword=None):
 
 def analyze_with_openai(emails_text, mode_description):
     print("Odesílám data do OpenAI, čekám na vygenerování reportu...", flush=True)
-    
-    # Změněný, maximálně věcný a nekompromisní prompt
     prompt = f"""
-Jsi ostrý operační asistent vrcholového manažera. Dej mi stručný, věcný a zcela konkrétní přehled za posledních 24 hodin.
-Žádné obecné fráze, úvahy ani "referáty". Pište přímo k věci formou úderných odrážek.
+Jsi špičkový exekutivní asistent vrcholového manažera v německé logistické a železniční společnosti. 
+Dej mi maximálně stručný, věcný a nekompromisní přehled formou odrážek. Žádné obecné fráze. Uváděj konkrétní jména, firmy, čísla vlaků a události.
 Režim: {mode_description}
 
-E-maily za posledních 24 hodin:
+E-maily:
 {'\n'.join(emails_text)}
-
-Struktura výstupu:
-1. **🚨 Akutní problémy & Hasiči** (Co hoří? Kdo co reklamuje, kde jsou zpoždění, výpadky nebo problémy vyžadující zásah?)
-2. **🚆 Provoz & Kdo s kým co řešil** (Konkrétní partneři, zákazníci, dispečeři, čísla vlaků/zakázek a shrnutí toho, na čem se domluvili nebo co se řeší)
-3. **📈 Obchod & Trh** (Reálné poptávky, nabídky, změny cen nebo smluvní věci)
-4. **🏠 Soukromé & Ostatní** (Pokud dorazilo něco osobního)
 """
     try:
         response = ai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Jsi věcný a nekompromisní asistent pro exekutivní management. Žádná vata."},
+                {"role": "system", "content": "Jsi věcný a nekompromisní asistent pro management."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.2,
-            max_tokens=1500
+            max_tokens=2000
         )
         print("Analýza od OpenAI byla úspěšně dokončena.", flush=True)
         return response.choices[0].message.content
@@ -182,14 +182,15 @@ def send_telegram_voice(chat_id, audio_io):
         print(f"Chyba sendVoice: {e}", flush=True)
 
 def process_command(command, chat_id, is_voice=False):
-    global LAST_CHAT_ID
+    global LAST_CHAT_ID, LAST_USER_ACTIVITY_DATE
     LAST_CHAT_ID = chat_id
+    LAST_USER_ACTIVITY_DATE = datetime.now().date()  # Zaznamenáme aktivitu uživatele
     
     cmd = command.strip().lower()
     print(f"Zpracovávám příkaz: {cmd}", flush=True)
     
     if "help" in cmd or "pomoc" in cmd:
-        send_telegram_message(chat_id, "Příkazy: s1-s90, r1-r90, pondeli, připomeň [text], úkoly")
+        send_telegram_message(chat_id, "Příkazy:\n- **a1** až **a90**: Abweichung (mimořádnosti)\n- **r1** až **r90**: Provoz Railtrans\n- **s1** až **s90**: Soukromé a ostatní (vše kromě @railtrans.eu)\n- **pondeli** (nebo týden): Podklad pro poradu za 168h (problémy, spory, trasy, DB InfraGO výluky)\n- **připomeň [text]**, **úkoly**")
         if is_voice:
             audio = text_to_speech("Tady je nápověda k příkazům.")
             if audio: send_telegram_voice(chat_id, audio)
@@ -216,40 +217,75 @@ def process_command(command, chat_id, is_voice=False):
     days = int(nums[0]) if nums else 1
     if days > 90: days = 90
 
-    if "pondeli" in cmd or "weekly" in cmd:
-        send_telegram_message(chat_id, f"📅 Generuji týdenní přehled za {days} dnů...")
-        emails = fetch_gmail_messages(days=days)
-        analysis = analyze_with_openai(emails or ["Žádné maily."], "Týdenní přehled operativy.")
+    # 1. ABWEICHUNG (Mimořádnosti)
+    if cmd.startswith('a'):
+        send_telegram_message(chat_id, f"⚠️ Vyhledávám Abweichungen za {days} dnů...")
+        emails = fetch_gmail_messages(days=days, keyword="Abweichung")
+        analysis = analyze_with_openai(emails or ["Žádné Abweichung e-maily nenalezeny."], f"Dispečerský přehled Abweichungen za {days} dnů.")
         send_telegram_message(chat_id, analysis[:4000])
         return
 
-    elif "r" in cmd:
+    # 2. RAILTRANS (Pouze @railtrans.eu nebo klíčové slovo railtrans)
+    elif cmd.startswith('r'):
         target_days = 1 if days == 1 else days
-        send_telegram_message(chat_id, f"🚆 Generuji provozní přehled Railtrans...")
-        emails = fetch_gmail_messages(days=target_days)
-        analysis = analyze_with_openai(emails or ["Žádné maily."], "Provozní přehled Railtrans - kdo s kým co řešil.")
+        send_telegram_message(chat_id, f"🚆 Generuji provozní přehled Railtrans za {target_days} dny...")
+        emails = fetch_gmail_messages(days=target_days, keyword="Railtrans")
+        analysis = analyze_with_openai(emails or ["Žádné maily od Railtrans."], f"Provozní přehled Railtrans za {target_days} dnů.")
         send_telegram_message(chat_id, analysis[:4000])
         return
 
-    elif "s" in cmd or days > 0:
+    # 3. PONDĚLNÍ PORADA / TÝDENNÍ SYSTÉMOVÝ SOUHRN (168 hodin)
+    elif "pondeli" in cmd or "weekly" in cmd or "tyden" in cmd:
+        send_telegram_message(chat_id, f"📅 Připravuji podklady pro pondělní poradu za posledních 168 hodin (problémy, spory, trasy, výluky)...")
+        # Stáhneme vše za 7 dnů (168h) a zaměříme se na provoz, trasy a DB InfraGO výluky
+        emails = fetch_gmail_messages(days=7, keyword=None)
+        
+        prompt_mode = """
+PODKLADY PRO PONDĚLNÍ PORADU (za posledních 168 hodin / 7 dnů):
+Proveď hloubkovou analýzu e-mailů s důrazem na:
+1. **🔥 Problémy, spory a nutné reakce** (Kdo s kým se dohaduje, kde hoří bota, co vyžaduje okamžitý manažerský zásah).
+2. **🛤️ Trasy & Koridory (Kudy jezdíme)** (Identifikuj z e-mailů klíčové trasy, tratě a přepravní relace, na kterých se pohybujeme).
+3. **🚧 Výhled provozu a výluky (DB InfraGO apod.)** (Vyhledej zmínky o výlukách, omezeních, změnách jízdních řádů, tiskových zprávách správců infrastruktury či dodavatelů a shrň, co nás čeká příští týden).
+"""
+        analysis = analyze_with_openai(emails or ["Žádné maily."], prompt_mode)
+        send_telegram_message(chat_id, analysis[:4000])
+        return
+
+    # 4. SOUKROMÉ A OSTATNÍ (Vše kromě @railtrans.eu)
+    elif cmd.startswith('s') or days > 0:
         target_days = 1 if days == 1 else days
-        send_telegram_message(chat_id, f"🔍 Generuji exekutivní přehled za 24h...")
-        emails = fetch_gmail_messages(days=target_days)
-        analysis = analyze_with_openai(emails or ["Žádné maily."], "Exekutivní operační přehled.")
+        send_telegram_message(chat_id, f"🔍 Generuji soukromý/ostatní přehled (vše kromě Railtrans)...")
+        emails = fetch_gmail_messages(days=target_days, keyword=None, exclude_keyword="railtrans.eu")
+        analysis = analyze_with_openai(emails or ["Žádné maily."], f"Soukromý a ostatní přehled (mimo Railtrans) za {target_days} dnů.")
         send_telegram_message(chat_id, analysis[:4000])
         if is_voice:
-            audio = text_to_speech("Exekutivní souhrn je hotový.")
+            audio = text_to_speech("Přehled je hotový.")
             if audio: send_telegram_voice(chat_id, audio)
         return
 
     else:
         send_telegram_message(chat_id, f"Neznámý příkaz: {cmd}. Napiš 'help'.")
 
+def automated_daily_18_job():
+    """Automatický denní report v 18:00, pokud se uživatel celý den neozval."""
+    global LAST_USER_ACTIVITY_DATE, LAST_CHAT_ID
+    if not LAST_CHAT_ID: return
+    
+    today = datetime.now().date()
+    if LAST_USER_ACTIVITY_DATE != today:
+        print("Uživatel se dnes neozval, spouštím automatický report v 18:00...", flush=True)
+        send_telegram_message(LAST_CHAT_ID, "⏰ Automatický denní report (žádná dnešní aktivita na Telegramu):")
+        emails = fetch_gmail_messages(days=1, keyword=None)
+        analysis = analyze_with_openai(emails or ["Žádné maily."], "Automatický denní přehled při neaktivitě.")
+        send_telegram_message(LAST_CHAT_ID, analysis[:4000])
+    else:
+        print("Uživatel byl dnes aktivní, automatický 18:00 report se vynechává.", flush=True)
+
 def automated_monday_job():
     if not LAST_CHAT_ID: return
-    send_telegram_message(LAST_CHAT_ID, "⏰ Automatický pondělní report...")
-    emails = fetch_gmail_messages(days=7)
-    analysis = analyze_with_openai(emails or ["Žádné maily."], "Automatický týdenní report.")
+    send_telegram_message(LAST_CHAT_ID, "⏰ Automatický pondělní týdenní report (168h)...")
+    emails = fetch_gmail_messages(days=7, keyword=None)
+    analysis = analyze_with_openai(emails or ["Žádné maily."], "Automatický týdenní souhrn pro poradu (problémy, trasy, výluky).")
     send_telegram_message(LAST_CHAT_ID, analysis[:4000])
 
 def run_telegram_bot():
@@ -259,9 +295,12 @@ def run_telegram_bot():
     print("Inicializuji APScheduler...", flush=True)
     try:
         scheduler = BackgroundScheduler()
+        # Pondělní porada v 9:00
         scheduler.add_job(automated_monday_job, 'cron', day_of_week='mon', hour=9, minute=0)
+        # Denní kontrola v 18:00 (pokud nebyla aktivita)
+        scheduler.add_job(automated_daily_18_job, 'cron', hour=18, minute=0)
         scheduler.start()
-        print("Scheduler úspěšně spuštěn.", flush=True)
+        print("Scheduler úspěšně spuštěn (včetně denního 18:00 hídače).", flush=True)
     except Exception as e:
         print(f"Chyba při startu scheduleru: {e}", flush=True)
 
