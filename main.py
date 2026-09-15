@@ -213,6 +213,9 @@ def automated_monday_job():
     send_telegram_message(LAST_CHAT_ID, analysis[:4000])
 
 def run_telegram_bot():
+    cleaned_token = TELEGRAM_BOT_TOKEN.strip()
+    print(f"DEBUG Token - délka: {len(cleaned_token)}, začátek: {cleaned_token[:10]}", flush=True)
+
     print("Inicializuji APScheduler...", flush=True)
     try:
         scheduler = BackgroundScheduler()
@@ -227,7 +230,7 @@ def run_telegram_bot():
 
     while True:
         try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=25"
+            url = f"https://api.telegram.org/bot{cleaned_token}/getUpdates?offset={offset}&timeout=25"
             response = requests.get(url, timeout=30)
             data = response.json()
 
