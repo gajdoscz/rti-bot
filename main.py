@@ -15,7 +15,7 @@ OPENAI_API_KEY = "sk-proj-10tudiMtXkG_qE57ZnndC12-d7c4ipi9CUJ3o4jydsOzswk0i-YNnc
 
 GMAIL_USER = "gajdoscz@gmail.com"
 GMAIL_APP_PASSWORD = "smwactngwgmfmdog"
-TELEGRAM_BOT_TOKEN = "8628786539:AAHFXVZn_I1mzjifQjtxULiBwYPBOS1dHxw"
+TELEGRAM_BOT_TOKEN = "8628786539:AAG9kPZQyC1knyZapa3OgDB3weisvxfnno"
 
 ai_client = OpenAI(api_key=OPENAI_API_KEY)
 
