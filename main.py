@@ -235,7 +235,7 @@ def process_command(command, chat_id, is_voice=False):
     days = int(nums[0]) if nums else 1
     if days > 90: days = 90
 
-    # PŘÍKAZ PRO SALES / OBCHOD (Podporuje sales, sales3, sales5 atd.)
+    # PŘÍKAZ PRO SALES / OBCHOD
     if "sales" in cmd or "obch" in cmd:
         sales_days = days if nums else 3
         if sales_days > 7: sales_days = 7
@@ -319,7 +319,7 @@ def automated_monday_job():
     send_telegram_message(LAST_CHAT_ID, analysis[:4000])
 
 def automated_wednesday_sales_job():
-    """Automatický středeční sales report ve 12:05 (přehled objednávek od pondělí do středy / 3 dny)."""
+    """Automatický středeční sales report ve 12:05."""
     if not LAST_CHAT_ID: return
     print("Spouštím automatický středeční sales report...", flush=True)
     send_telegram_message(LAST_CHAT_ID, "📈 Automatický středeční sales report (objednávky na sales.de@railtrans.eu):")
@@ -341,23 +341,23 @@ def run_telegram_bot():
     print("Inicializuji APScheduler...", flush=True)
     try:
         scheduler = BackgroundScheduler()
-        # Pondělní porada v 9:00
         scheduler.add_job(automated_monday_job, 'cron', day_of_week='mon', hour=9, minute=0)
-        # Středeční sales report ve 12:05
         scheduler.add_job(automated_wednesday_sales_job, 'cron', day_of_week='wed', hour=12, minute=5)
-        # Denní kontrola v 18:00
         scheduler.add_job(automated_daily_18_job, 'cron', hour=18, minute=0)
         scheduler.start()
-        print("Scheduler úspěšně spuštěn (včetně středečního sales reportu ve 12:05).", flush=True)
+        print("Scheduler úspěšně spuštěn.", flush=True)
     except Exception as e:
         print(f"Chyba při startu scheduleru: {e}", flush=True)
 
-    print("Vstupuji do hlavní smyčky Telegram getUpdates...", flush=True)
-    processed_update_ids = set()
+    print("Vstupuji do hlavní smyčky Telegram getUpdates s offsetem...", flush=True)
+    offset = None
 
     while True:
         try:
             url = f"https://api.telegram.org/bot{cleaned_token}/getUpdates?timeout=10"
+            if offset:
+                url += f"&offset={offset}"
+
             response = requests.get(url, timeout=15)
             data = response.json()
 
@@ -374,12 +374,8 @@ def run_telegram_bot():
             results = data.get("result", [])
             for update in results:
                 update_id = update["update_id"]
-                if update_id in processed_update_ids:
-                    continue
-                
-                processed_update_ids.add(update_id)
-                if len(processed_update_ids) > 100:
-                    processed_update_ids.pop()
+                # Posuneme offset na další ID, aby Telegram věděl, že tato zpráva je vyřízena
+                offset = update_id + 1
 
                 message = update.get("message")
                 if message:
