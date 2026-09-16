@@ -26,7 +26,7 @@ LAST_CHAT_ID = None
 LAST_USER_ACTIVITY_DATE = None
 
 def extract_attachment_text(part):
-    """Přečte Excelovou nebo CSV přílohu a převede ji na text pro OpenAI."""
+    """Přečte Excelovou nebo CSV přílohu, ořízne ji na max 100 řádků kvůli tokenům a převede na text."""
     try:
         filename = part.get_filename()
         if not filename:
@@ -49,10 +49,20 @@ def extract_attachment_text(part):
             dfs = pd.read_excel(file_bytes, sheet_name=None, dtype=str)
             for sheet_name, df in dfs.items():
                 attachment_text += f"--- List: {sheet_name} ---\n"
-                attachment_text += df.to_string(index=False) + "\n"
+                total_rows = len(df)
+                if total_rows > 100:
+                    df = df.head(100)
+                    attachment_text += df.to_string(index=False) + f"\n[... tabulka zkrácena, zobrazeno prvních 100 z celkových {total_rows} řádků ...]\n"
+                else:
+                    attachment_text += df.to_string(index=False) + "\n"
         elif filename_lower.endswith('.csv'):
             df = pd.read_csv(file_bytes, dtype=str)
-            attachment_text += df.to_string(index=False) + "\n"
+            total_rows = len(df)
+            if total_rows > 100:
+                df = df.head(100)
+                attachment_text += df.to_string(index=False) + f"\n[... tabulka zkrácena, zobrazeno prvních 100 z celkových {total_rows} řádků ...]\n"
+            else:
+                attachment_text += df.to_string(index=False) + "\n"
         
         return attachment_text
     except Exception as e:
@@ -151,7 +161,7 @@ def fetch_gmail_messages(days=1, keyword=None, exclude_keyword=None, recipient_k
                     emails_data.append(combined_content)
 
         mail.logout()
-        print(f"Úspěšně zpracováno a předáno: {len(emails_data)} e-mailů (včetně příloh).", flush=True)
+        print(f"Úspěšně zpracováno a předáno: {len(emails_data)} e-mailů (včetně zkrácených příloh).", flush=True)
         return emails_data
     except Exception as e:
         print(f"Chyba při IMAP stahování: {e}", flush=True)
@@ -175,7 +185,7 @@ E-maily a přílohy k analýze:
 """
     try:
         response = ai_client.chat.completions.create(
-            model="gpt-4o",  # Změněno na gpt-4o pro zvládnutí velkého kontextu příloh
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "Jsi věcný a nekompromisní asistent pro management."},
                 {"role": "user", "content": prompt}
@@ -245,7 +255,7 @@ def process_command(command, chat_id, is_voice=False):
     print(f"Zpracovávám příkaz: {cmd}", flush=True)
     
     if "help" in cmd or "pomoc" in cmd:
-        send_telegram_message(chat_id, "Příkazy:\n- **sales** / **sales3** až **sales7**: Sales přehled (včetně Excel příloh) ze sales.de@railtrans.eu\n- **a1** až **a90**: Abweichung (mimořádnosti)\n- **r1** až **r90**: Provoz Railtrans\n- **s1** až **s90**: Soukromé a ostatní (zcela bez @railtrans.eu)\n- **pondeli** (nebo týden): Podklad za 168h\n- **připomeň [text]**, **úkoly**")
+        send_telegram_message(chat_id, "Příkazy:\n- **sales** / **sales3** až **sales7**: Sales přehled (včetně zkrácených Excel příloh) ze sales.de@railtrans.eu\n- **a1** až **a90**: Abweichung (mimořádnosti)\n- **r1** až **r90**: Provoz Railtrans\n- **s1** až **s90**: Soukromé a ostatní (zcela bez @railtrans.eu)\n- **pondeli** (nebo týden): Podklad za 168h\n- **připomeň [text]**, **úkoly**")
         if is_voice:
             audio = text_to_speech("Tady je nápověda k příkazům.")
             if audio: send_telegram_voice(chat_id, audio)
@@ -272,14 +282,14 @@ def process_command(command, chat_id, is_voice=False):
     days = int(nums[0]) if nums else 1
     if days > 90: days = 90
 
-    # PŘÍKAZ PRO SALES / OBCHOD (Čte i Excel přílohy)
+    # PŘÍKAZ PRO SALES / OBCHOD
     if "sales" in cmd or "obch" in cmd:
         sales_days = days if nums else 3
         if sales_days > 7: sales_days = 7
 
-        send_telegram_message(chat_id, f"📈 Generuji salesový přehled (včetně Excel příloh) pro sales.de@railtrans.eu za posledních {sales_days} dnů...")
-        emails = fetch_gmail_messages(days=sales_days, recipient_keyword="sales.de@railtrans.eu", max_emails=80)
-        analysis = analyze_with_openai(emails or ["Žádné maily adresované na sales.de@railtrans.eu."], f"Sales přehled za {sales_days} dnů (zahrnující texty i data z Excel příloh): Seskup objednávky a poptávky podle zákazníků, uveď relace a celkový počet poptávaných vlaků.")
+        send_telegram_message(chat_id, f"📈 Generuji salesový přehled pro sales.de@railtrans.eu za posledních {sales_days} dnů...")
+        emails = fetch_gmail_messages(days=sales_days, recipient_keyword="sales.de@railtrans.eu", max_emails=100)
+        analysis = analyze_with_openai(emails or ["Žádné maily adresované na sales.de@railtrans.eu."], f"Sales přehled za {sales_days} dnů: Seskup objednávky a poptávky podle zákazníků, uveď relace a celkový počet poptávaných vlaků.")
         send_telegram_message(chat_id, analysis[:4000])
         return
 
@@ -356,17 +366,17 @@ def automated_monday_job():
     send_telegram_message(LAST_CHAT_ID, analysis[:4000])
 
 def automated_wednesday_sales_job():
-    """Automatický středeční sales report ve 12:05 (zahrnuje i Excel přílohy)."""
+    """Automatický středeční sales report ve 12:05."""
     if not LAST_CHAT_ID: return
     print("Spouštím automatický středeční sales report...", flush=True)
-    send_telegram_message(LAST_CHAT_ID, "📈 Automatický středeční sales report (objednávky na sales.de@railtrans.eu včetně Excel příloh):")
+    send_telegram_message(LAST_CHAT_ID, "📈 Automatický středeční sales report (objednávky na sales.de@railtrans.eu):")
     
     emails = fetch_gmail_messages(days=3, recipient_keyword="sales.de@railtrans.eu", max_emails=100)
     prompt_sales = """
-STŘEDEČNÍ SALES REPORT (Pohled na objednávky z e-mailů a Excel příloh adresovaných na sales.de@railtrans.eu):
-Zpracuj e-maily a přiložené tabulky a vytvoř přehled:
-1. **Zákazníci & Poptávané vlaky/relace**: Seskup objednávky podle jednotlivých zákazníků. U každého napiš, jaké vlaky/relace poptává (využij data z textů i Excel tabulek).
-2. **Celkový přehled**: Uveď přesný celkový počet poptávaných vlaků za toto období.
+STŘEDEČNÍ SALES REPORT (Pohled na objednávky z e-mailů adresovaných na sales.de@railtrans.eu):
+Zpracuj e-maily a vytvoř přehled:
+1. **Zákazníci & Poptávané vlaky/relace**: Seskup objednávky podle jednotlivých zákazníků. U každého napiš, jaké vlaky/relace poptává.
+2. **Celkový přehled**: Uveď přibližný celkový počet poptávaných vlaků za toto období.
 """
     analysis = analyze_with_openai(emails or ["Žádné sales maily za toto období."], prompt_sales)
     send_telegram_message(LAST_CHAT_ID, analysis[:4000])
