@@ -11,6 +11,7 @@ import re
 import io
 import socket
 import pandas as pd
+import xml.etree.ElementTree as ET
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # --- KONFIGURACE ---
@@ -26,8 +27,9 @@ VIP_WATCH_LIST = ["Gunvor", "Metrans", "Rail Force One", "Deutsche Bahn"]
 LAST_CHAT_ID = None
 LAST_USER_ACTIVITY_DATE = None
 SEEN_VIP_MESSAGE_IDS = set()
+SEEN_NEWS_URLS = set()
 
-# Cache paměť pro průběžně sbírané maily
+# Cache paměť na 1200 zpráv pro 7 dní
 CACHED_EMAILS_DB = []
 
 def extract_attachment_text(part):
@@ -75,16 +77,16 @@ def extract_attachment_text(part):
         return ""
 
 def background_email_collector_job():
-    """Průběžně stahuje a parsuje maily do interní paměti (Cache) na pozadí."""
+    """Průběžně stahuje a parsuje maily za posledních 7 dnů do interní cache paměti na pozadí."""
     global CACHED_EMAILS_DB
-    print("Spouštím průběžný sběr e-mailů do paměti na pozadí...", flush=True)
+    print("Spouštím průběžný sběr e-mailů do cache (7 dnů)...", flush=True)
     try:
         socket.setdefaulttimeout(15)
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         mail.select("inbox")
 
-        since_date = (datetime.now() - timedelta(days=4)).strftime("%d-%b-%Y")
+        since_date = (datetime.now() - timedelta(days=7)).strftime("%d-%b-%Y")
         status, messages = mail.search(None, f'(SINCE "{since_date}")')
         if status != "OK":
             mail.logout()
@@ -133,23 +135,20 @@ def background_email_collector_job():
                             body = payload.decode("utf-8", errors="ignore")
 
                     msg_id_str = e_id.decode('utf-8')
+                    email_record = {
+                        "id": msg_id_str,
+                        "content": f"Od: {sender} | Pro: {to_field} | Kopie: {cc_field}\nPředmět: {subject}\nObsah: {body[:600]}...\n{attachments_text}\n---"
+                    }
+                    
                     if not any(item['id'] == msg_id_str for item in CACHED_EMAILS_DB):
-                        email_record = {
-                            "id": msg_id_str,
-                            "date": msg.get("Date"),
-                            "sender": sender,
-                            "to": to_field,
-                            "subject": subject,
-                            "content": f"Od: {sender} | Pro: {to_field} | Kopie: {cc_field}\nPředmět: {subject}\nObsah: {body[:600]}...\n{attachments_text}\n---"
-                        }
                         new_collected.append(email_record)
 
         CACHED_EMAILS_DB.extend(new_collected)
-        if len(CACHED_EMAILS_DB) > 300:
-            CACHED_EMAILS_DB = CACHED_EMAILS_DB[-300:]
+        if len(CACHED_EMAILS_DB) > 1200:
+            CACHED_EMAILS_DB = CACHED_EMAILS_DB[-1200:]
 
         mail.logout()
-        print(f"Průběžný sběr dokončen. Celkem v paměti: {len(CACHED_EMAILS_DB)} zpráv.", flush=True)
+        print(f"Cache aktualizována. Celkem v paměti: {len(CACHED_EMAILS_DB)} zpráv.", flush=True)
 
         check_vip_alerts(new_collected)
 
@@ -174,10 +173,40 @@ def check_vip_alerts(new_emails):
                 send_telegram_message(LAST_CHAT_ID, alert_text)
                 break
 
+def hourly_media_scanner_job():
+    """Hodinový skener veřejných médií (Google News RSS) na zmínky o firmě nebo jménu v CZ, SK, DE, AT."""
+    global LAST_CHAT_ID, SEEN_NEWS_URLS
+    if not LAST_CHAT_ID:
+        return
+    
+    print("Spouštím hodinový mediální skener...", flush=True)
+    queries = ["Railtrans International", "Railtrans", "Michal Gajdos"]
+    
+    for query in queries:
+        try:
+            url = f"https://news.google.com/rss/search?q={requests.utils.quote(query)}&hl=cs&gl=CZ&ceid=CZ:cs"
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200:
+                continue
+            
+            root = ET.fromstring(resp.content)
+            for item in root.findall(".//item"):
+                title = item.find("title").text if item.find("title") is not None else ""
+                link = item.find("link").text if item.find("link") is not None else ""
+                pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+                
+                if link and link not in SEEN_NEWS_URLS:
+                    SEEN_NEWS_URLS.add(link)
+                    # Odeslat alert do Telegramu
+                    alert_msg = f"📰 **MEDIÁLNÍ ALERT (Nalezena zmínka: '{query}'):**\n\n**Titulek:** {title}\n**Datum:** {pub_date}\n🔗 [Odkaz na článek]({link})"
+                    send_telegram_message(LAST_CHAT_ID, alert_msg)
+        except Exception as e:
+            print(f"Chyba při skenování médií pro '{query}': {e}", flush=True)
+
 def get_emails_from_cache(days=1, recipient_filter=None, exclude_filter=None):
     filtered = []
     for item in CACHED_EMAILS_DB:
-        env = f"{item['sender']} {item['to']}".lower()
+        env = item["content"].lower()
         if recipient_filter and recipient_filter.lower() not in env:
             continue
         if exclude_filter and exclude_filter.lower() in env:
@@ -189,8 +218,13 @@ def get_emails_from_cache(days=1, recipient_filter=None, exclude_filter=None):
 def analyze_with_openai(emails_text, mode_description):
     print("Odesílám data do OpenAI (gpt-4o)...", flush=True)
     prompt = f"""
-Jsi špičkový operační dispečer a obchodní asistent vrcholového manažera v německé logistické společnosti. 
-Tvým úkolem je zpracovat nasbíranou e-mailovou komunikaci **včetně tabulkových příloh (Excel)** do **maximálně podrobného, přesného a strukturovaného přehledu**.
+Jsi špičkový operační dispečer, analytik a obchodní asistent vrcholového manažera v německé logistické společnosti. 
+Zpracuj níže uvedenou e-mailovou komunikaci (v češtině, slovenštině, němčině i angličtině, včetně Excel příloh) do **maximálně podrobného, přesného a strukturovaného přehledu**.
+
+Zohledni specifika trhu (DE/AT):
+- Stav infrastruktury a výluky (DB InfraGO, ÖBB).
+- Trh práce, mzdové náklady, kolektivní smlouvy (EVG, GDL).
+- Oborové trendy, kapacity a trassengebühren.
 
 Režim a instrukce: {mode_description}
 
@@ -228,7 +262,7 @@ def process_command(command, chat_id):
     print(f"Zpracovávám příkaz: {cmd}", flush=True)
     
     if "help" in cmd or "pomoc" in cmd:
-        send_telegram_message(chat_id, "Příkazy:\n- **sales1** až **sales7**: Sales přehled z cache paměti\n- **a1** až **a90**: Abweichung\n- **r1** až **r90**: Provoz Railtrans\n- **s1** až **s90**: Soukromé a ostatní\n- **pondeli**: Podklad za 168h\n- **vip**, **pridejvip [jméno]**, **smazvip [jméno]**")
+        send_telegram_message(chat_id, "Příkazy:\n- **sales1** až **sales7**: Sales přehled\n- **a1** až **a90**: Abweichung\n- **r1** až **r90**: Provoz Railtrans\n- **s1** až **s90**: Soukromé a ostatní\n- **pondeli**: Týdenní podklad za 168h\n- **obor**: Úterní oborový report (DE/AT)\n- **vip**, **pridejvip [jméno]**, **smazvip [jméno]**")
         return
 
     if cmd.startswith("pridejvip"):
@@ -258,9 +292,9 @@ def process_command(command, chat_id):
         sales_days = days if nums else 1
         if sales_days > 7: sales_days = 7
         
-        send_telegram_message(chat_id, f"📈 Generuji sales přehled z cache za posledních {sales_days} dnů...")
+        send_telegram_message(chat_id, f"📈 Generuji sales přehled za posledních {sales_days} dnů...")
         emails = get_emails_from_cache(days=sales_days, recipient_filter="sales.de@railtrans.eu")
-        analysis = analyze_with_openai(emails, f"Sales přehled za {sales_days} dnů z Excel příloh a e-mailů: Seskup poptávky podle zákazníků, relace a spočítej celkový počet poptávaných vlaků.")
+        analysis = analyze_with_openai(emails, f"Sales přehled za {sales_days} dnů: Seskup poptávky podle zákazníků, relace a spočítej celkový počet poptávaných vlaků.")
         send_telegram_message(chat_id, analysis[:4000])
         return
 
@@ -280,9 +314,16 @@ def process_command(command, chat_id):
         return
 
     elif "pondeli" in cmd or "tyden" in cmd:
-        send_telegram_message(chat_id, f"📅 Připravuji podklady za posledních 168 hodin...")
+        send_telegram_message(chat_id, f"📅 Generuji týdenní podklady za 168 hodin z cache...")
         emails = get_emails_from_cache(days=7)
-        analysis = analyze_with_openai(emails, "Podklady pro poradu za 168 hodin: Problémy, spory, příběhy vlaků.")
+        analysis = analyze_with_openai(emails, "Podklady pro poradu za 168 hodin: Problémy, spory, příběhy klíčových vlaků, výluky DB InfraGO/ÖBB, trh práce a mzdy.")
+        send_telegram_message(chat_id, analysis[:4000])
+        return
+
+    elif "obor" in cmd:
+        send_telegram_message(chat_id, f"📊 Generuji úterní oborový report pro DE/AT trh...")
+        emails = get_emails_from_cache(days=7)
+        analysis = analyze_with_openai(emails, "Oborový přehled trhu železniční nákladní dopravy (DE/AT): Změny cen energií, poplatky za dopravní cestu (Trassengebühren), výluky DB InfraGO & ÖBB, zprávy z odborových svazů a trhu práce (mzdy). Vždy uveď zdroje a odkazy na články online.")
         send_telegram_message(chat_id, analysis[:4000])
         return
 
@@ -300,32 +341,49 @@ def process_command(command, chat_id):
 def automated_evening_executive_report_job():
     global LAST_CHAT_ID
     if not LAST_CHAT_ID: return
-    
-    print("Spouštím večerní exekutivní report s doporučeními...", flush=True)
+    print("Spouštím večerní exekutivní report...", flush=True)
     emails = get_emails_from_cache(days=1)
-    
     prompt_executive = """
-Připrav večerní exekutivní souhrn pro vrcholového manažera (Michala) za uplynulý den. 
-Mluv lidsky, věcně a profesionálně (tykání, přímé oslovení).
-
-Struktura reportu:
+Připrav večerní exekutivní souhrn pro vrcholového manažera (Michala) za uplynulý den. Mluv lidsky, věcně a profesionálně (tykání, přímé oslovení).
+Struktura: 
 1. **Shrnutí situace**: Co dnes bylo nejdůležitější (problémy, více-náklady, provozní stavy).
-2. **Kategorizované závěry**: Roztřiď události do logických oblastí (např. Problémy/Mimořádnosti, Obchod a poptávky, Důležité zprávy a schůzky).
-3. **⚠️ Akční kroky & Doporučené reakce**: U každého kritického bodu jasně zformuluj, jak by měl manažer reagovat a jaký má být další krok.
+2. **Kategorizované závěry**: Roztřiď události do oblastí (Problémy/Mimořádnosti, Obchod a poptávky, Infrastruktura DB InfraGO/ÖBB, Trh práce).
+3. **⚠️ Akční kroky & Doporučené reakce**: U každého kritického bodu jasně zformuluj doporučenou reakci a další krok (včetně návrhu znění odpovědi nebo mailu do služební pošty railtrans).
 """
     analysis = analyze_with_openai(emails, prompt_executive)
-    send_telegram_message(LAST_CHAT_ID, f"🌙 **Večerní exekutivní přehled:**\n\n{analysis[:4000]}" )
+    send_telegram_message(LAST_CHAT_ID, f"🌙 **Večerní exekutivní přehled:**\n\n{analysis[:4000]}")
+
+def automated_monday_job():
+    global LAST_CHAT_ID
+    if not LAST_CHAT_ID: return
+    print("Spouštím automatický pondělní report v 9:00...", flush=True)
+    send_telegram_message(LAST_CHAT_ID, "⏰ Automatický pondělní týdenní report za 168 hodin...")
+    emails = get_emails_from_cache(days=7)
+    analysis = analyze_with_openai(emails, "Podklady pro pondělní poradu za 168 hodin (zahrň i makro trendy DE/AT, výluky a mzdový vývoj).")
+    send_telegram_message(LAST_CHAT_ID, analysis[:4000])
+
+def automated_tuesday_industry_job():
+    global LAST_CHAT_ID
+    if not LAST_CHAT_ID: return
+    print("Spouštím automatický úterní oborový report v 9:00...", flush=True)
+    send_telegram_message(LAST_CHAT_ID, "⏰ Automatický úterní oborový report (DE / AT trh)...")
+    emails = get_emails_from_cache(days=7)
+    analysis = analyze_with_openai(emails, "Oborový přehled trhu železniční nákladní dopravy (DE/AT): Změny cen energií, poplatky za dopravní cestu (Trassengebühren), výluky DB InfraGO & ÖBB, zprávy z odborových svazů a trhu práce (mzdy). Vždy uveď zdroje a odkazy na články online.")
+    send_telegram_message(LAST_CHAT_ID, analysis[:4000])
 
 def run_telegram_bot():
     cleaned_token = TELEGRAM_BOT_TOKEN.strip()
-    print("Inicializuji APScheduler a startuji Telegram smyčku...", flush=True)
+    print("Inicializuji APScheduler (pondělí/úterý v 9:00, večerní v 18:00, cache 15 min, media 1h)...", flush=True)
     try:
         scheduler = BackgroundScheduler()
-        # Průběžný sběr pošty každých 15 minut na pozadí
-        scheduler.add_job(background_email_collector_job, 'interval', minutes=15)
-        # Večerní exekutivní report v 18:00
+        scheduler.add_job(automated_monday_job, 'cron', day_of_week='mon', hour=9, minute=0)
+        scheduler.add_job(automated_tuesday_industry_job, 'cron', day_of_week='tue', hour=9, minute=0)
         scheduler.add_job(automated_evening_executive_report_job, 'cron', hour=18, minute=0)
+        scheduler.add_job(background_email_collector_job, 'interval', minutes=15)
+        scheduler.add_job(hourly_media_scanner_job, 'interval', hours=1)
         scheduler.start()
+        
+        background_email_collector_job()
     except Exception as e:
         print(f"Chyba při startu scheduleru: {e}", flush=True)
 
