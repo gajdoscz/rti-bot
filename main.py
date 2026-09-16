@@ -32,7 +32,6 @@ def extract_attachment_text(part):
         if not filename:
             return ""
         
-        # Dekódování názvu přílohy, pokud je kódovaný
         decoded_header = decode_header(filename)
         fname, encoding = decoded_header[0]
         if isinstance(fname, bytes):
@@ -47,11 +46,9 @@ def extract_attachment_text(part):
         attachment_text = f"\n[PŘÍLOHA: {fname}]\n"
 
         if filename_lower.endswith(('.xlsx', '.xls')):
-            # Čtení Excelu přes pandas (načteme všechny listy)
             dfs = pd.read_excel(file_bytes, sheet_name=None, dtype=str)
             for sheet_name, df in dfs.items():
                 attachment_text += f"--- List: {sheet_name} ---\n"
-                # Převedeme tabulku na textový přehled (CSV/Markdown styl)
                 attachment_text += df.to_string(index=False) + "\n"
         elif filename_lower.endswith('.csv'):
             df = pd.read_csv(file_bytes, dtype=str)
@@ -62,7 +59,7 @@ def extract_attachment_text(part):
         print(f"Chyba při čtení přílohy: {e}", flush=True)
         return ""
 
-def fetch_gmail_messages(days=1, keyword=None, exclude_keyword=None, recipient_keyword=None, max_emails=150):
+def fetch_gmail_messages(days=1, keyword=None, exclude_keyword=None, recipient_keyword=None, max_emails=100):
     print(f"Stahuji e-maily z Gmailu (okno: {days} dnů, klíčové slovo: {keyword}, příjemce: {recipient_keyword}, exkluze: {exclude_keyword})...", flush=True)
     emails_data = []
     try:
@@ -93,7 +90,7 @@ def fetch_gmail_messages(days=1, keyword=None, exclude_keyword=None, recipient_k
 
         for e_id in reversed(email_ids):
             if len(emails_data) >= max_emails:
-                print(f"Dosaženo limitu {max_emails} e-mailů pro ochranu kontextu OpenAI.", flush=True)
+                print(f"Dosaženo limitu {max_emails} e-mailů pro ochranu kontextu.", flush=True)
                 break
 
             res, msg_data = mail.fetch(e_id, "(RFC822)")
@@ -144,7 +141,6 @@ def fetch_gmail_messages(days=1, keyword=None, exclude_keyword=None, recipient_k
                                 if payload:
                                     body = payload.decode("utf-8", errors="ignore")
                             elif "attachment" in content_disposition or part.get_filename():
-                                # Zpracování přílohy (Excel / CSV)
                                 attachments_text += extract_attachment_text(part)
                     else:
                         payload = msg.get_payload(decode=True)
@@ -162,7 +158,7 @@ def fetch_gmail_messages(days=1, keyword=None, exclude_keyword=None, recipient_k
         return []
 
 def analyze_with_openai(emails_text, mode_description):
-    print("Odesílám data do OpenAI, čekám na konsolidovanou analýzu...", flush=True)
+    print("Odesílám data do OpenAI (gpt-4o), čekám na konsolidovanou analýzu...", flush=True)
     prompt = f"""
 Jsi špičkový operační dispečer a obchodní asistent vrcholového manažera v německé logistické společnosti. 
 Tvým úkolem je zpracovat surové e-maily **včetně tabulkových příloh (Excel)** do **maximálně podrobného, přesného a věcného přehledu**.
@@ -179,13 +175,13 @@ E-maily a přílohy k analýze:
 """
     try:
         response = ai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",  # Změněno na gpt-4o pro zvládnutí velkého kontextu příloh
             messages=[
                 {"role": "system", "content": "Jsi věcný a nekompromisní asistent pro management."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            max_tokens=2500
+            max_tokens=3000
         )
         print("Analýza od OpenAI byla úspěšně dokončena.", flush=True)
         return response.choices[0].message.content
@@ -282,7 +278,7 @@ def process_command(command, chat_id, is_voice=False):
         if sales_days > 7: sales_days = 7
 
         send_telegram_message(chat_id, f"📈 Generuji salesový přehled (včetně Excel příloh) pro sales.de@railtrans.eu za posledních {sales_days} dnů...")
-        emails = fetch_gmail_messages(days=sales_days, recipient_keyword="sales.de@railtrans.eu", max_emails=100)
+        emails = fetch_gmail_messages(days=sales_days, recipient_keyword="sales.de@railtrans.eu", max_emails=80)
         analysis = analyze_with_openai(emails or ["Žádné maily adresované na sales.de@railtrans.eu."], f"Sales přehled za {sales_days} dnů (zahrnující texty i data z Excel příloh): Seskup objednávky a poptávky podle zákazníků, uveď relace a celkový počet poptávaných vlaků.")
         send_telegram_message(chat_id, analysis[:4000])
         return
@@ -299,7 +295,7 @@ def process_command(command, chat_id, is_voice=False):
     elif cmd.startswith('r'):
         target_days = 1 if days == 1 else days
         send_telegram_message(chat_id, f"🚆 Generuji provozní přehled Railtrans za {target_days} dny...")
-        emails = fetch_gmail_messages(days=target_days, keyword="Railtrans", max_emails=150)
+        emails = fetch_gmail_messages(days=target_days, keyword="Railtrans", max_emails=100)
         analysis = analyze_with_openai(emails or ["Žádné maily od Railtrans."], f"Provozní přehled Railtrans za {target_days} dnů.")
         send_telegram_message(chat_id, analysis[:4000])
         return
@@ -307,7 +303,7 @@ def process_command(command, chat_id, is_voice=False):
     # 3. PONDĚLNÍ PORADA / TÝDENNÍ SOUHRN (168 hodin)
     elif "pondeli" in cmd or "weekly" in cmd or "tyden" in cmd:
         send_telegram_message(chat_id, f"📅 Připravuji podklady pro pondělní poradu za posledních 168 hodin...")
-        emails = fetch_gmail_messages(days=7, keyword=None, max_emails=150)
+        emails = fetch_gmail_messages(days=7, keyword=None, max_emails=120)
         
         prompt_mode = f"""
 PODKLADY PRO PONDĚLNÍ PORADU (Aktuální rok: 2026, sledované období: posledních 168 hodin / 7 dnů):
@@ -355,7 +351,7 @@ def automated_daily_18_job():
 def automated_monday_job():
     if not LAST_CHAT_ID: return
     send_telegram_message(LAST_CHAT_ID, "⏰ Automatický pondělní týdenní report (168h)...")
-    emails = fetch_gmail_messages(days=7, keyword=None, max_emails=150)
+    emails = fetch_gmail_messages(days=7, keyword=None, max_emails=120)
     analysis = analyze_with_openai(emails or ["Žádné maily."], "Automatický týdenní souhrn pro poradu.")
     send_telegram_message(LAST_CHAT_ID, analysis[:4000])
 
