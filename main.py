@@ -27,7 +27,7 @@ LAST_CHAT_ID = None
 LAST_USER_ACTIVITY_DATE = None
 SEEN_VIP_MESSAGE_IDS = set()
 
-# Cache paměť pro průběžně sbírané maily (vyhneme se zdržování a výpadkům)
+# Cache paměť pro průběžně sbírané maily
 CACHED_EMAILS_DB = []
 
 def extract_attachment_text(part):
@@ -75,7 +75,7 @@ def extract_attachment_text(part):
         return ""
 
 def background_email_collector_job():
-    """Průběžně každých 15 minut stahuje a parsuje maily do interní paměti (Cache)."""
+    """Průběžně stahuje a parsuje maily do interní paměti (Cache) na pozadí."""
     global CACHED_EMAILS_DB
     print("Spouštím průběžný sběr e-mailů do paměti na pozadí...", flush=True)
     try:
@@ -105,10 +105,8 @@ def background_email_collector_job():
                     to_field = msg.get("To", "")
                     cc_field = msg.get("Cc", "")
                     
-                    # 🛡️ ANTI-LOOP OCHRANA: Ignorujeme vlastní odeslané zprávy nebo sales adresses
-                    full_envelope = f"{sender} {to_field} {cc_field}".lower()
+                    # 🛡️ ANTI-LOOP OCHRANA
                     if "sales.de@railtrans.eu" in sender.lower() or "gajdoscz@gmail.com" in sender.lower():
-                        # Pokud to posíláme my ven, ignorujeme to, aby se to necyklilo
                         if "automatický" in msg.get("Subject", "").lower() or "report" in msg.get("Subject", "").lower():
                             continue
 
@@ -135,7 +133,6 @@ def background_email_collector_job():
                             body = payload.decode("utf-8", errors="ignore")
 
                     msg_id_str = e_id.decode('utf-8')
-                    # Zkontrolujeme, zda už v cache není
                     if not any(item['id'] == msg_id_str for item in CACHED_EMAILS_DB):
                         email_record = {
                             "id": msg_id_str,
@@ -147,7 +144,6 @@ def background_email_collector_job():
                         }
                         new_collected.append(email_record)
 
-        # Přidáme do paměti a udržujeme maximálně posledních 300 položek
         CACHED_EMAILS_DB.extend(new_collected)
         if len(CACHED_EMAILS_DB) > 300:
             CACHED_EMAILS_DB = CACHED_EMAILS_DB[-300:]
@@ -155,7 +151,6 @@ def background_email_collector_job():
         mail.logout()
         print(f"Průběžný sběr dokončen. Celkem v paměti: {len(CACHED_EMAILS_DB)} zpráv.", flush=True)
 
-        # Spustíme i VIP check na nově nasbírané
         check_vip_alerts(new_collected)
 
     except Exception as e:
@@ -180,12 +175,8 @@ def check_vip_alerts(new_emails):
                 break
 
 def get_emails_from_cache(days=1, recipient_filter=None, exclude_filter=None):
-    """Vrátí vyfiltrované e-maily z lokální cache paměti podle dnů a filtrů."""
-    cutoff = datetime.now() - timedelta(days=days)
     filtered = []
-    
     for item in CACHED_EMAILS_DB:
-        # Filtrování podle adresátů / exkluzí
         env = f"{item['sender']} {item['to']}".lower()
         if recipient_filter and recipient_filter.lower() not in env:
             continue
@@ -263,7 +254,6 @@ def process_command(command, chat_id):
     days = int(nums[0]) if nums else 1
     if days > 90: days = 90
 
-    # SALES Z CACHE PAMĚTI (Podpora sales1 až sales7)
     if "sales" in cmd:
         sales_days = days if nums else 1
         if sales_days > 7: sales_days = 7
@@ -307,7 +297,6 @@ def process_command(command, chat_id):
     else:
         send_telegram_message(chat_id, f"Neznámý příkaz: {cmd}. Napiš 'help'.")
 
-# --- VEČERNÍ ŠPIČKOVÝ EXEKUTIVNÍ SOUHRN (18:00) S DOPORUČENÍMI ---
 def automated_evening_executive_report_job():
     global LAST_CHAT_ID
     if not LAST_CHAT_ID: return
@@ -322,26 +311,21 @@ Mluv lidsky, věcně a profesionálně (tykání, přímé oslovení).
 Struktura reportu:
 1. **Shrnutí situace**: Co dnes bylo nejdůležitější (problémy, více-náklady, provozní stavy).
 2. **Kategorizované závěry**: Roztřiď události do logických oblastí (např. Problémy/Mimořádnosti, Obchod a poptávky, Důležité zprávy a schůzky).
-3. **⚠️ Akční kroky & Doporučené reakce**: U každého kritického bodu jasně zformuluj, jak by měl manažer reagovat a jaký má být další krok (např. „Odpovědět firmě X ohledně stolu“, „Ověřit více-náklady na vlaku Y“).
-
-Nezahrnuj technické detaily, pište čistě pro manažerské rozhodování.
+3. **⚠️ Akční kroky & Doporučené reakce**: U každého kritického bodu jasně zformuluj, jak by měl manažer reagovat a jaký má být další krok.
 """
     analysis = analyze_with_openai(emails, prompt_executive)
     send_telegram_message(LAST_CHAT_ID, f"🌙 **Večerní exekutivní přehled:**\n\n{analysis[:4000]}" )
 
 def run_telegram_bot():
     cleaned_token = TELEGRAM_BOT_TOKEN.strip()
-    print("Inicializuji APScheduler s průběžným sběrem a večerním reportem...", flush=True)
+    print("Inicializuji APScheduler a startuji Telegram smyčku...", flush=True)
     try:
         scheduler = BackgroundScheduler()
-        # Průběžný sběr pošty každých 15 minut
+        # Průběžný sběr pošty každých 15 minut na pozadí
         scheduler.add_job(background_email_collector_job, 'interval', minutes=15)
         # Večerní exekutivní report v 18:00
         scheduler.add_job(automated_evening_executive_report_job, 'cron', hour=18, minute=0)
         scheduler.start()
-        
-        # Okamžitě při startu spustíme jeden sběr, ať má cache data
-        background_email_collector_job()
     except Exception as e:
         print(f"Chyba při startu scheduleru: {e}", flush=True)
 
@@ -354,9 +338,11 @@ def run_telegram_bot():
     except Exception:
         pass
 
+    print("Bot je plně online a poslouchá Telegram...", flush=True)
+
     while True:
         try:
-            url = f"https://api.telegram.org/bot{cleaned_Token if 'cleaned_Token' in locals() else cleaned_token}/getUpdates?timeout=10"
+            url = f"https://api.telegram.org/bot{cleaned_token}/getUpdates?timeout=10"
             if offset:
                 url += f"&offset={offset}"
 
