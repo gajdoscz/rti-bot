@@ -24,7 +24,7 @@ SAVED_REMINDERS = []
 LAST_CHAT_ID = None
 LAST_USER_ACTIVITY_DATE = None
 
-def fetch_gmail_messages(days=1, keyword=None, exclude_keyword=None):
+def fetch_gmail_messages(days=1, keyword=None, exclude_keyword=None, max_emails=150):
     print(f"Stahuji e-maily z Gmailu (okno: {days} dnů, klíčové slovo: {keyword}, exkluze: {exclude_keyword})...", flush=True)
     emails_data = []
     try:
@@ -54,7 +54,12 @@ def fetch_gmail_messages(days=1, keyword=None, exclude_keyword=None):
         cutoff_time = datetime.now() - timedelta(days=days)
         matched_count = 0
 
-        for idx, e_id in enumerate(email_ids):
+        # Projdeme maily od nejnovějších
+        for e_id in reversed(email_ids):
+            if len(emails_data) >= max_emails:
+                print(f"Dosaženo limitu {max_emails} e-mailů pro ochranu kontextu OpenAI.", flush=True)
+                break
+
             res, msg_data = mail.fetch(e_id, "(RFC822)")
             if res != "OK":
                 continue
@@ -102,10 +107,11 @@ def fetch_gmail_messages(days=1, keyword=None, exclude_keyword=None):
                         if payload:
                             body = payload.decode("utf-8", errors="ignore")
 
-                    emails_data.append(f"Od: {sender} | Pro: {to_field}\nPředmět: {subject}\nObsah: {body[:1000]}...\n---")
+                    # Bezpečnostní ořez na 400 znaků obsahu, aby OpenAI nikdy nepřetekla
+                    emails_data.append(f"Od: {sender} | Pro: {to_field}\nPředmět: {subject}\nObsah: {body[:400]}...\n---")
 
         mail.logout()
-        print(f"Úspěšně filtrováno: {matched_count} e-mailů.", flush=True)
+        print(f"Úspěšně zpracováno a předáno: {len(emails_data)} e-mailů.", flush=True)
         return emails_data
     except Exception as e:
         print(f"Chyba při IMAP stahování: {e}", flush=True)
@@ -235,7 +241,7 @@ def process_command(command, chat_id, is_voice=False):
     # 1. ABWEICHUNG
     if cmd.startswith('a'):
         send_telegram_message(chat_id, f"⚠️ Vyhledávám Abweichungen za {days} dnů...")
-        emails = fetch_gmail_messages(days=days, keyword="Abweichung")
+        emails = fetch_gmail_messages(days=days, keyword="Abweichung", max_emails=100)
         analysis = analyze_with_openai(emails or ["Žádné Abweichung e-maily nenalezeny."], f"Dispečerský přehled Abweichungen za {days} dnů.")
         send_telegram_message(chat_id, analysis[:4000])
         return
@@ -244,15 +250,16 @@ def process_command(command, chat_id, is_voice=False):
     elif cmd.startswith('r'):
         target_days = 1 if days == 1 else days
         send_telegram_message(chat_id, f"🚆 Generuji provozní přehled Railtrans za {target_days} dny...")
-        emails = fetch_gmail_messages(days=target_days, keyword="Railtrans")
-        analysis = analyze_with_openai(emails or ["Žádné maily od Railtrans."], f"Provozní přehled Railtrans za {target_days} dnů (zahrnuje identifikaci zákazníků, detailní časové osy vlaků se všemi zastávkami a ostatní požadavky).")
+        emails = fetch_gmail_messages(days=target_days, keyword="Railtrans", max_emails=150)
+        analysis = analyze_with_openai(emails or ["Žádné maily od Railtrans."], f"Provozní přehled Railtrans za {target_days} dnů.")
         send_telegram_message(chat_id, analysis[:4000])
         return
 
     # 3. PONDĚLNÍ PORADA / TÝDENNÍ SOUHRN (168 hodin)
     elif "pondeli" in cmd or "weekly" in cmd or "tyden" in cmd:
         send_telegram_message(chat_id, f"📅 Připravuji podklady pro pondělní poradu za posledních 168 hodin...")
-        emails = fetch_gmail_messages(days=7, keyword=None)
+        # Pro týdenní přehled omezíme maximální počet mailů na 150 nejnovějších, aby OpenAI nezahltila tokeny
+        emails = fetch_gmail_messages(days=7, keyword=None, max_emails=150)
         
         prompt_mode = f"""
 PODKLADY PRO PONDĚLNÍ PORADU (Aktuální rok: 2026, sledované období: posledních 168 hodin / 7 dnů):
@@ -272,7 +279,7 @@ Zaměř se na:
     elif cmd.startswith('s'):
         target_days = 1 if days == 1 else days
         send_telegram_message(chat_id, f"🔍 Generuji soukromý/ostatní přehled (zcela bez Railtrans)...")
-        emails = fetch_gmail_messages(days=target_days, keyword=None, exclude_keyword="railtrans.eu")
+        emails = fetch_gmail_messages(days=target_days, keyword=None, exclude_keyword="railtrans.eu", max_emails=100)
         analysis = analyze_with_openai(emails or ["Žádné maily."], f"Soukromý a ostatní přehled (mimo Railtrans) za {target_days} dnů.")
         send_telegram_message(chat_id, analysis[:4000])
         if is_voice:
@@ -291,7 +298,7 @@ def automated_daily_18_job():
     if LAST_USER_ACTIVITY_DATE != today:
         print("Uživatel se dnes neozval, spouštím automatický report v 18:00...", flush=True)
         send_telegram_message(LAST_CHAT_ID, "⏰ Automatický denní report (žádná dnešní aktivita na Telegramu):")
-        emails = fetch_gmail_messages(days=1, keyword=None)
+        emails = fetch_gmail_messages(days=1, keyword=None, max_emails=100)
         analysis = analyze_with_openai(emails or ["Žádné maily."], "Automatický denní přehled při neaktivitě.")
         send_telegram_message(LAST_CHAT_ID, analysis[:4000])
     else:
@@ -300,7 +307,7 @@ def automated_daily_18_job():
 def automated_monday_job():
     if not LAST_CHAT_ID: return
     send_telegram_message(LAST_CHAT_ID, "⏰ Automatický pondělní týdenní report (168h)...")
-    emails = fetch_gmail_messages(days=7, keyword=None)
+    emails = fetch_gmail_messages(days=7, keyword=None, max_emails=150)
     analysis = analyze_with_openai(emails or ["Žádné maily."], "Automatický týdenní souhrn pro poradu.")
     send_telegram_message(LAST_CHAT_ID, analysis[:4000])
 
