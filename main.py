@@ -102,7 +102,7 @@ def fetch_gmail_messages(days=1, keyword=None, exclude_keyword=None):
                         if payload:
                             body = payload.decode("utf-8", errors="ignore")
 
-                    emails_data.append(f"Od: {sender} | Pro: {to_field}\nPředmět: {subject}\nObsah: {body[:900]}...\n---")
+                    emails_data.append(f"Od: {sender} | Pro: {to_field}\nPředmět: {subject}\nObsah: {body[:1000]}...\n---")
 
         mail.logout()
         print(f"Úspěšně filtrováno: {matched_count} e-mailů.", flush=True)
@@ -115,12 +115,18 @@ def analyze_with_openai(emails_text, mode_description):
     print("Odesílám data do OpenAI, čekám na konsolidovanou analýzu...", flush=True)
     prompt = f"""
 Jsi špičkový operační dispečer a asistent vrcholového manažera v německé logistické a železniční společnosti. 
-Tvým úkolem je zpracovat surové e-maily do **maximálně konsolidované, přehledné a věcné formy**.
+Tvým úkolem je zpracovat surové e-maily do **maximálně podrobného, přesného a věcného přehledu**.
 
-⚠️ POVINNÁ STRUKTURA A PRAVIDLA PRO PROVOZNÍ REPORTY:
-1. **🚆 Seskupené příběhy vlaků (Statusy a avíza):** Zprávy o odjezdech, průjezdech a příjezdech konkrétních vlaků sluč do ucelených příběhů (např. *Vlak [číslo] [Odkud -> Kam]: Odjel v [čas], projel [stanice]...*). Překládej dispečerské zkratky (DSA, XTDV apod.) na plné názvy stanic (Bad Schandau, Děčín atd.).
-2. **💬 Ostatní provozní požadavky, dotazy & jednání:** Zde vypisuj veškeré další provozní věci, které nejsou pouhým hlásením polohy vlaku – tedy vzájemné požadavky partnerů, řešení problémů, dispečerské dotazy, změny v řazení, schvalování tras nebo jednání s dopravci a zákazníky.
-3. **Struчноst a věcnost:** Žádná vata, formou úderných odrážek, uváděj konkrétní jména, firmy a čísla.
+⚠️ POVINNÁ PRAVIDLA PRO ZPRACOVÁNÍ:
+1. **Identifikace zákazníka/partnera:** U každého případu, vlaku či zprávy jasně uveď, o jakého zákazníka, dopravce nebo partnera se jedná (např. BLS Cargo, Boxxpress atd.).
+2. **Detailní chronologická časová osa vlaků (Žádné zkratkovité vynechávání):** 
+   - U každého vlaku detailně rozepiš celou jeho trasu tak, jak šla za sebou v e-mailech.
+   - Uveď přesný čas a místo odjezdu.
+   - **Nevynechávej mezilehlé body, zastávky ani neplánovaná stání** (pokud e-mail hlásí zastavení u Braunschweigu či jinde, uveď to i s časem!).
+   - Uveď průjezdy a plánovaný/aktuální příjezd.
+3. **Překlad stanic:** Vždy uváděj **plné a srozumitelné názvy stanic a měst** (žádné dispečerské zkratky jako XTDV nebo DSA, piš Bad Schandau, Děčín atd.).
+4. **Ostatní provozní požadavky & jednání:** V samostatné sekci vypisuj vzájemné požadavky, dotazy, změny řazení a řešení mimořádností.
+5. **Stručnost a věcnost:** Žádná vata, formou úderných odrážek.
 
 Režim: {mode_description}
 
@@ -134,7 +140,7 @@ E-maily k analýze:
                 {"role": "system", "content": "Jsi věcný a nekompromisní dispečerský asistent pro management."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.2,
+            temperature=0.1,
             max_tokens=2500
         )
         print("Analýza od OpenAI byla úspěšně dokončena.", flush=True)
@@ -199,7 +205,7 @@ def process_command(command, chat_id, is_voice=False):
     print(f"Zpracovávám příkaz: {cmd}", flush=True)
     
     if "help" in cmd or "pomoc" in cmd:
-        send_telegram_message(chat_id, "Příkazy:\n- **a1** až **a90**: Abweichung (mimořádnosti)\n- **r1** až **r90**: Provoz Railtrans (seskupené vlaky + ostatní dispečerské požadavky)\n- **s1** až **s90**: Soukromé a ostatní (zcela bez @railtrans.eu)\n- **pondeli** (nebo týden): Podklad za 168h\n- **připomeň [text]**, **úkoly**")
+        send_telegram_message(chat_id, "Příkazy:\n- **a1** až **a90**: Abweichung (mimořádnosti)\n- **r1** až **r90**: Provoz Railtrans (zákazníci, časové osy vlaků, požadavky)\n- **s1** až **s90**: Soukromé a ostatní (zcela bez @railtrans.eu)\n- **pondeli** (nebo týden): Podklad za 168h\n- **připomeň [text]**, **úkoly**")
         if is_voice:
             audio = text_to_speech("Tady je nápověda k příkazům.")
             if audio: send_telegram_voice(chat_id, audio)
@@ -234,12 +240,12 @@ def process_command(command, chat_id, is_voice=False):
         send_telegram_message(chat_id, analysis[:4000])
         return
 
-    # 2. RAILTRANS (Vlaky + Ostatní dispečerské požadavky a jednání)
+    # 2. RAILTRANS (Zákazníci, časové osy vlaků, požadavky)
     elif cmd.startswith('r'):
         target_days = 1 if days == 1 else days
         send_telegram_message(chat_id, f"🚆 Generuji provozní přehled Railtrans za {target_days} dny...")
         emails = fetch_gmail_messages(days=target_days, keyword="Railtrans")
-        analysis = analyze_with_openai(emails or ["Žádné maily od Railtrans."], f"Provozní přehled Railtrans za {target_days} dnů (zahrnuje seskupené vlaky i ostatní dispečerské požadavky a jednání).")
+        analysis = analyze_with_openai(emails or ["Žádné maily od Railtrans."], f"Provozní přehled Railtrans za {target_days} dnů (zahrnuje identifikaci zákazníků, detailní časové osy vlaků se všemi zastávkami a ostatní požadavky).")
         send_telegram_message(chat_id, analysis[:4000])
         return
 
@@ -254,16 +260,16 @@ Proveď hloubkovou analýzu POUZE na základě přiložených e-mailů.
 
 Zaměř se na:
 1. **🔥 Problémy, spory a nutné reakce** (reálné spory či požadavky z e-mailů).
-2. **🚆 Seskupené příběhy klíčových vlaků za týden** (Sluč avíza, průjezdy a příjezdy k jednotlivým vlakům do celistvých přehledů, plné názvy stanic).
-3. **💬 Ostatní provozní požadavky, dotazy & jednání** (Co dalšího se v provozu řešilo mimo samotné polohy vlaků).
+2. **🚆 Seskupené příběhy klíčových vlaků a zákazníků za týden** (včetně zákazníků, plných názvů stanic, mezilehlých stání a časů).
+3. **💬 Ostatní provozní požadavky, dotazy & jednání**.
 4. **🚧 Výluky a omezení** (pouze pokud o nich přišel e-mail).
 """
         analysis = analyze_with_openai(emails or ["Žádné maily."], prompt_mode)
         send_telegram_message(chat_id, analysis[:4000])
         return
 
-    # 4. SOUKROMÉ A OSTATNÍ
-    elif cmd.startswith('s') or days > 0:
+    # 4. SOUKROMÉ A OSTATNÍ (Spustí se POUZE pokud příkaz začíná na 's')
+    elif cmd.startswith('s'):
         target_days = 1 if days == 1 else days
         send_telegram_message(chat_id, f"🔍 Generuji soukromý/ostatní přehled (zcela bez Railtrans)...")
         emails = fetch_gmail_messages(days=target_days, keyword=None, exclude_keyword="railtrans.eu")
