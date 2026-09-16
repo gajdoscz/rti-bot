@@ -342,7 +342,8 @@ def run_telegram_bot():
     try:
         scheduler = BackgroundScheduler()
         scheduler.add_job(automated_monday_job, 'cron', day_of_week='mon', hour=9, minute=0)
-        scheduler.add_job(automated_wednesday_sales_job, 'cron', day_of_wed='wed', hour=12, minute=5)
+        # OPRAVENO: day_of_week='wed' místo day_of_wed
+        scheduler.add_job(automated_wednesday_sales_job, 'cron', day_of_week='wed', hour=12, minute=5)
         scheduler.add_job(automated_daily_18_job, 'cron', hour=18, minute=0)
         scheduler.start()
         print("Scheduler úspěšně spuštěn.", flush=True)
@@ -351,9 +352,6 @@ def run_telegram_bot():
 
     print("Vstupuji do hlavní smyčky Telegram getUpdates a čistím starou frontu...", flush=True)
     
-    # JEDNORÁDOVÉ PROČIŠTĚNÍ STARÉ FRONTY PŘI STARTU:
-    # Stáhneme aktuální zprávy a nastavíme offset na tu úplně nejnovější,
-    # aby bot ignoroval všechno, co v chatu viselo před spuštěním.
     offset = None
     try:
         init_url = f"https://api.telegram.org/bot{cleaned_token}/getUpdates?timeout=1"
