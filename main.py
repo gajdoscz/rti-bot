@@ -285,7 +285,7 @@ Zaměř se na:
     # 4. SOUKROMÉ A OSTATNÍ
     elif cmd.startswith('s'):
         target_days = 1 if days == 1 else days
-        send_telegram_message(chat_id, f"🔍 Generuji soukromý/ostatní přehled (zcela bez Railtrans)...")
+        send_telegram_message(chat_id, f"🔍 Generuji soukromý/ostatní přehled (mimo Railtrans)...")
         emails = fetch_gmail_messages(days=target_days, keyword=None, exclude_keyword="railtrans.eu", max_emails=100)
         analysis = analyze_with_openai(emails or ["Žádné maily."], f"Soukromý a ostatní přehled (mimo Railtrans) za {target_days} dnů.")
         send_telegram_message(chat_id, analysis[:4000])
@@ -342,15 +342,28 @@ def run_telegram_bot():
     try:
         scheduler = BackgroundScheduler()
         scheduler.add_job(automated_monday_job, 'cron', day_of_week='mon', hour=9, minute=0)
-        scheduler.add_job(automated_wednesday_sales_job, 'cron', day_of_week='wed', hour=12, minute=5)
+        scheduler.add_job(automated_wednesday_sales_job, 'cron', day_of_wed='wed', hour=12, minute=5)
         scheduler.add_job(automated_daily_18_job, 'cron', hour=18, minute=0)
         scheduler.start()
         print("Scheduler úspěšně spuštěn.", flush=True)
     except Exception as e:
         print(f"Chyba při startu scheduleru: {e}", flush=True)
 
-    print("Vstupuji do hlavní smyčky Telegram getUpdates s offsetem...", flush=True)
+    print("Vstupuji do hlavní smyčky Telegram getUpdates a čistím starou frontu...", flush=True)
+    
+    # JEDNORÁDOVÉ PROČIŠTĚNÍ STARÉ FRONTY PŘI STARTU:
+    # Stáhneme aktuální zprávy a nastavíme offset na tu úplně nejnovější,
+    # aby bot ignoroval všechno, co v chatu viselo před spuštěním.
     offset = None
+    try:
+        init_url = f"https://api.telegram.org/bot{cleaned_token}/getUpdates?timeout=1"
+        init_resp = requests.get(init_url, timeout=5).json()
+        if init_resp.get("ok") and init_resp.get("result"):
+            last_update = init_resp["result"][-1]
+            offset = last_update["update_id"] + 1
+            print(f"Stará fronta pročištěna. Nový startovací offset: {offset}", flush=True)
+    except Exception as e:
+        print(f"Poznámka při čištění fronty: {e}", flush=True)
 
     while True:
         try:
@@ -374,7 +387,6 @@ def run_telegram_bot():
             results = data.get("result", [])
             for update in results:
                 update_id = update["update_id"]
-                # Posuneme offset na další ID, aby Telegram věděl, že tato zpráva je vyřízena
                 offset = update_id + 1
 
                 message = update.get("message")
