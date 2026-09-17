@@ -27,11 +27,10 @@ ai_client = OpenAI(api_key=OPENAI_API_KEY)
 VIP_WATCH_LIST = ["Gunvor", "Metrans", "Rail Force One", "Deutsche Bahn"]  
 LAST_CHAT_ID = None
 SEEN_VIP_MESSAGE_IDS = set()
-SEEN_NEWS_URLS = set()
 
 CACHED_EMAILS_DB = []
 
-# Flask webový server, aby Render aplikaci neuspával / neresetoval
+# Flask webový server, aby Render aplikaci neresetoval
 app = Flask(__name__)
 
 @app.route('/')
@@ -156,8 +155,6 @@ def background_email_collector_job(days_to_fetch=2):
                         if not any(item['id'] == msg_id_str for item in CACHED_EMAILS_DB):
                             new_collected.append(email_record)
 
-                if idx % 20 == 0 or idx == total_msgs:
-                    print(f"Zpracováno {idx}/{total_msgs} zpráv...", flush=True)
             except Exception as inner_e:
                 print(f"Chyba u zprávy: {inner_e}", flush=True)
                 continue
@@ -192,10 +189,12 @@ def check_vip_alerts(new_emails):
                 break
 
 def get_emails_from_cache(days=1):
-    """Vrátí maily z cache za posledních X dnů."""
-    filtered = []
-    cutoff_time = datetime.now() - timedelta(days=days)
-    # Vzhledem k tomu, že v cache máme uložené texty, vezmeme odpovídající počet posledních záznamů nebo všechny dostupné
+    """Vrátí maily z cache. Pokud je cache prázdná, provede nouzové okamžité stažení."""
+    global CACHED_EMAILS_DB
+    if not CACHED_EMAILS_DB:
+        print("Cache je prázdná, spouštím nouzové okamžité stažení dat...", flush=True)
+        background_email_collector_job(days_to_fetch=days)
+        
     return [item["content"] for item in CACHED_EMAILS_DB] if CACHED_EMAILS_DB else ["Žádné e-maily v paměti."]
 
 def analyze_with_openai(emails_text, mode_description):
@@ -262,7 +261,6 @@ def process_command(command, chat_id):
         send_telegram_message(chat_id, f"📋 **Sledovaní VIP:**\n{list_str}")
         return
 
-    # Zpracování příkazů r1 až r10
     nums = re.findall(r'\d+', cmd)
     days = int(nums[0]) if nums else 1
     if days > 10: days = 10
@@ -292,18 +290,15 @@ def run_telegram_bot():
     print("Inicializuji APScheduler a Flask server...", flush=True)
     try:
         scheduler = BackgroundScheduler()
-        # Automatické ranní hlášení každý den v 8:00
         scheduler.add_job(automated_morning_railtrans_job, 'cron', hour=8, minute=0)
         scheduler.add_job(background_email_collector_job, 'interval', minutes=15)
         scheduler.start()
     except Exception as e:
         print(f"Chyba při startu scheduleru: {e}", flush=True)
 
-    # Flask server na pozadí
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
-    # Úvodní sběr dat
     init_collector_thread = threading.Thread(target=background_email_collector_job, kwargs={"days_to_fetch": 2}, daemon=True)
     init_collector_thread.start()
 
