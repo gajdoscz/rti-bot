@@ -29,6 +29,7 @@ LAST_CHAT_ID = None
 SEEN_VIP_MESSAGE_IDS = set()
 
 CACHED_EMAILS_DB = []
+CACHE_LOCK = threading.Lock() # Zámek pro bezpečné přidávání dat z vícero vláken
 
 # Flask webový server, aby Render aplikaci neresetoval
 app = Flask(__name__)
@@ -86,7 +87,7 @@ def extract_attachment_text(part):
         return ""
 
 def background_email_collector_job(days_to_fetch=2):
-    """Stahuje a parsuje maily do interní cache paměti na pozadí."""
+    """Stahuje a parsuje maily a ihned je ukládá do cache paměti."""
     global CACHED_EMAILS_DB
     print(f"Spouštím sběr e-mailů do cache (okno: {days_to_fetch} dny)...", flush=True)
     try:
@@ -102,9 +103,10 @@ def background_email_collector_job(days_to_fetch=2):
             return
 
         email_ids = messages[0].split()
-        new_collected = []
         total_msgs = len(email_ids)
         print(f"Nalezeno celkem {total_msgs} zpráv k zpracování.", flush=True)
+
+        new_for_vip = []
 
         for idx, e_id in enumerate(reversed(email_ids), 1):
             try:
@@ -152,20 +154,26 @@ def background_email_collector_job(days_to_fetch=2):
                             "content": f"Od: {sender} | Pro: {to_field} | Kopie: {cc_field}\nPředmět: {subject}\nObsah: {body[:600]}...\n{attachments_text}\n---"
                         }
                         
-                        if not any(item['id'] == msg_id_str for item in CACHED_EMAILS_DB):
-                            new_collected.append(email_record)
+                        # ⚡ PŘIDÁVÁME DO CACHE PRŮBĚŽNĚ HNED PŘI ZPRACOVÁNÍ
+                        with CACHE_LOCK:
+                            if not any(item['id'] == msg_id_str for item in CACHED_EMAILS_DB):
+                                CACHED_EMAILS_DB.append(email_record)
+                                new_for_vip.append(email_record)
 
             except Exception as inner_e:
                 print(f"Chyba u zprávy: {inner_e}", flush=True)
                 continue
 
-        CACHED_EMAILS_DB.extend(new_collected)
+            if idx % 20 == 0 or idx == total_msgs:
+                print(f"Zpracováno {idx}/{total_msgs} zpráv (v cache je celkem {len(CACHED_EMAILS_DB)})...", flush=True)
+
         if len(CACHED_EMAILS_DB) > 1200:
-            CACHED_EMAILS_DB = CACHED_EMAILS_DB[-1200:]
+            with CACHE_LOCK:
+                CACHED_EMAILS_DB = CACHED_EMAILS_DB[-1200:]
 
         mail.logout()
-        print(f"Cache aktualizována. Celkem v paměti: {len(CACHED_EMAILS_DB)} zpráv.", flush=True)
-        check_vip_alerts(new_collected)
+        print(f"Sběr dokončen. Celkem v paměti: {len(CACHED_EMAILS_DB)} zpráv.", flush=True)
+        check_vip_alerts(new_for_vip)
 
     except Exception as e:
         print(f"Chyba při sběru: {e}", flush=True)
@@ -189,15 +197,19 @@ def check_vip_alerts(new_emails):
                 break
 
 def get_emails_from_cache(days=1, chat_id=None):
-    """Vrátí maily z cache. Pokud je cache prázdná, provedeme nouzové okamžité stažení."""
+    """Vrátí maily z cache. Pokud je cache prázdná, provede nouzové stažení."""
     global CACHED_EMAILS_DB
-    if not CACHED_EMAILS_DB:
+    with CACHE_LOCK:
+        is_empty = len(CACHED_EMAILS_DB) == 0
+
+    if is_empty:
         print("⚠️ Cache je prázdná, spouštím nouzové okamžité stažení dat...", flush=True)
         if chat_id:
             send_telegram_message(chat_id, "⏳ Stahuji aktuální data z e-mailu, okamžik prosím...")
         background_email_collector_job(days_to_fetch=days)
         
-    return [item["content"] for item in CACHED_EMAILS_DB] if CACHED_EMAILS_DB else ["Žádné e-maily v paměti."]
+    with CACHE_LOCK:
+        return [item["content"] for item in CACHED_EMAILS_DB] if CACHED_EMAILS_DB else ["Žádné e-maily v paměti."]
 
 def analyze_with_openai(emails_text, mode_description):
     print("Odesílám data do OpenAI (gpt-4o)...", flush=True)
@@ -292,7 +304,6 @@ def run_telegram_bot():
     print("Inicializuji APScheduler a Flask server...", flush=True)
     try:
         scheduler = BackgroundScheduler()
-        # Automatické ranní hlášení každý den v 08:00
         scheduler.add_job(automated_morning_railtrans_job, 'cron', hour=8, minute=0)
         scheduler.add_job(background_email_collector_job, 'interval', minutes=15)
         scheduler.start()
