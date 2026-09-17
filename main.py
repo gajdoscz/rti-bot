@@ -394,15 +394,16 @@ def run_telegram_bot():
         scheduler.add_job(background_email_collector_job, 'interval', minutes=15)
         scheduler.add_job(hourly_media_scanner_job, 'interval', hours=1)
         scheduler.start()
-        
-        # Při startu vezmeme pro rychlý náběh 2 dny, zbytek týdne se dobíhá na pozadí
-        background_email_collector_job(days_to_fetch=2)
     except Exception as e:
         print(f"Chyba při startu scheduleru: {e}", flush=True)
 
-    # Spustíme Flask server na pozadí v samostatném vlákně
+    # Spustíme Flask server na pozadí
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
+
+    # Spustíme úvodní stahování mailů v samostatném vlákně, aby to neblokovalo start bota
+    init_collector_thread = threading.Thread(target=background_email_collector_job, kwargs={"days_to_fetch": 2}, daemon=True)
+    init_collector_thread.start()
 
     offset = None
     try:
