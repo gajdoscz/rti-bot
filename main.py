@@ -188,11 +188,13 @@ def check_vip_alerts(new_emails):
                 send_telegram_message(LAST_CHAT_ID, alert_text)
                 break
 
-def get_emails_from_cache(days=1):
-    """Vrátí maily z cache. Pokud je cache prázdná, provede nouzové okamžité stažení."""
+def get_emails_from_cache(days=1, chat_id=None):
+    """Vrátí maily z cache. Pokud je cache prázdná, provedeme nouzové okamžité stažení."""
     global CACHED_EMAILS_DB
     if not CACHED_EMAILS_DB:
-        print("Cache je prázdná, spouštím nouzové okamžité stažení dat...", flush=True)
+        print("⚠️ Cache je prázdná, spouštím nouzové okamžité stažení dat...", flush=True)
+        if chat_id:
+            send_telegram_message(chat_id, "⏳ Stahuji aktuální data z e-mailu, okamžik prosím...")
         background_email_collector_job(days_to_fetch=days)
         
     return [item["content"] for item in CACHED_EMAILS_DB] if CACHED_EMAILS_DB else ["Žádné e-maily v paměti."]
@@ -267,7 +269,7 @@ def process_command(command, chat_id):
 
     if cmd.startswith('r'):
         send_telegram_message(chat_id, f"🚆 Generuji provozní přehled Railtrans za posledních {days} dnů...")
-        emails = get_emails_from_cache(days=days)
+        emails = get_emails_from_cache(days=days, chat_id=chat_id)
         analysis = analyze_with_openai(emails, f"Provozní přehled Railtrans za {days} dnů: Seskup události, mimořádnosti a provozní stav.")
         send_telegram_message(chat_id, analysis[:4000])
         return
@@ -281,7 +283,7 @@ def automated_morning_railtrans_job():
         return
     print("Spouštím automatické ranní shrnutí Railtrans v 8:00...", flush=True)
     send_telegram_message(LAST_CHAT_ID, "🌅 **Dobré ráno! Zde je automatický přehled provozu Railtrans za posledních 24 hodin:**")
-    emails = get_emails_from_cache(days=1)
+    emails = get_emails_from_cache(days=1, chat_id=LAST_CHAT_ID)
     analysis = analyze_with_openai(emails, "Ranní dispečerský přehled Railtrans za posledních 24 hodin: Klíčové události, zpoždění, problémy a stav vlaků.")
     send_telegram_message(LAST_CHAT_ID, analysis[:4000])
 
@@ -290,6 +292,7 @@ def run_telegram_bot():
     print("Inicializuji APScheduler a Flask server...", flush=True)
     try:
         scheduler = BackgroundScheduler()
+        # Automatické ranní hlášení každý den v 08:00
         scheduler.add_job(automated_morning_railtrans_job, 'cron', hour=8, minute=0)
         scheduler.add_job(background_email_collector_job, 'interval', minutes=15)
         scheduler.start()
