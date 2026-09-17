@@ -18,7 +18,7 @@ import threading
 
 # --- KONFIGURACE ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-GMAIL_USER = "gajdoscz@gmail.com"
+GMAIL_USER = "gajdos.cz@gmail.com"
 GMAIL_APP_PASSWORD = "ueolepkubctpkdqn"
 TELEGRAM_BOT_TOKEN = "8628786539:AAEjHL6fVdqkRHD63IEPerKvRLLZE0YnXT0"
 
@@ -88,10 +88,10 @@ def extract_attachment_text(part):
         print(f"Chyba při čtení přílohy: {e}", flush=True)
         return ""
 
-def background_email_collector_job(days_to_fetch=7):
+def background_email_collector_job(days_to_fetch=1):
     """Průběžně stahuje a parsuje maily do interní cache paměti na pozadí."""
     global CACHED_EMAILS_DB
-    print(f"Spouštím sběr e-mailů do cache (okno: {days_to_fetch} dnů)...", flush=True)
+    print(f"Spouštím sběr e-mailů do cache (okno: {days_to_fetch} den/dny)...", flush=True)
     try:
         socket.setdefaulttimeout(15)
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
@@ -121,8 +121,8 @@ def background_email_collector_job(days_to_fetch=7):
                     to_field = msg.get("To", "")
                     cc_field = msg.get("Cc", "")
                     
-                    # 🛡️ ANTI-LOOP OCHRANA
-                    if "sales.de@railtrans.eu" in sender.lower() or "gajdoscz@gmail.com" in sender.lower():
+                    # 🛡️ ANTI-LOOP OCHRANA (pokryté obě varianty adresy s i bez tečky)
+                    if "sales.de@railtrans.eu" in sender.lower() or "gajdos.cz" in sender.lower() or "gajdoscz" in sender.lower():
                         if "automatický" in msg.get("Subject", "").lower() or "report" in msg.get("Subject", "").lower():
                             continue
 
@@ -401,8 +401,8 @@ def run_telegram_bot():
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
-    # Spustíme úvodní stahování mailů v samostatném vlákně, aby to neblokovalo start bota
-    init_collector_thread = threading.Thread(target=background_email_collector_job, kwargs={"days_to_fetch": 2}, daemon=True)
+    # Spustíme rychlé úvodní stahování (pouze za 1 den) v samostatném vlákně
+    init_collector_thread = threading.Thread(target=background_email_collector_job, kwargs={"days_to_fetch": 1}, daemon=True)
     init_collector_thread.start()
 
     offset = None
