@@ -29,9 +29,9 @@ LAST_CHAT_ID = None
 SEEN_VIP_MESSAGE_IDS = set()
 
 CACHED_EMAILS_DB = []
-CACHE_LOCK = threading.Lock() # Zámek pro bezpečné přidávání dat z vícero vláken
+CACHE_LOCK = threading.Lock()
 
-# Flask webový server, aby Render aplikaci neresetoval
+# Flask webový server
 app = Flask(__name__)
 
 @app.route('/')
@@ -154,7 +154,6 @@ def background_email_collector_job(days_to_fetch=2):
                             "content": f"Od: {sender} | Pro: {to_field} | Kopie: {cc_field}\nPředmět: {subject}\nObsah: {body[:600]}...\n{attachments_text}\n---"
                         }
                         
-                        # ⚡ PŘIDÁVÁME DO CACHE PRŮBĚŽNĚ HNED PŘI ZPRACOVÁNÍ
                         with CACHE_LOCK:
                             if not any(item['id'] == msg_id_str for item in CACHED_EMAILS_DB):
                                 CACHED_EMAILS_DB.append(email_record)
@@ -165,7 +164,7 @@ def background_email_collector_job(days_to_fetch=2):
                 continue
 
             if idx % 20 == 0 or idx == total_msgs:
-                print(f"Zpracováno {idx}/{total_msgs} zpráv (v cache je celkem {len(CACHED_EMAILS_DB)})...", flush=True)
+                print(f"Zpracováno {idx}/{total_msgs} zpráv...", flush=True)
 
         if len(CACHED_EMAILS_DB) > 1200:
             with CACHE_LOCK:
@@ -203,24 +202,31 @@ def get_emails_from_cache(days=1, chat_id=None):
         is_empty = len(CACHED_EMAILS_DB) == 0
 
     if is_empty:
-        print("⚠️ Cache je prázdná, spouštím nouzové okamžité stažení dat...", flush=True)
         if chat_id:
-            send_telegram_message(chat_id, "⏳ Stahuji aktuální data z e-mailu, okamžik prosím...")
+            send_telegram_message(chat_id, "📥 **Cache je prázdná.** Připojuji se k IMAPu a stahuji aktuální e-maily...")
         background_email_collector_job(days_to_fetch=days)
         
     with CACHE_LOCK:
         return [item["content"] for item in CACHED_EMAILS_DB] if CACHED_EMAILS_DB else ["Žádné e-maily v paměti."]
 
-def analyze_with_openai(emails_text, mode_description):
+def analyze_with_openai(emails_text, mode_description, chat_id=None):
+    if chat_id:
+        send_telegram_message(chat_id, "🧠 **Analyzuji data pomocí OpenAI (gpt-4o)...** Připravuji hloubkový přehled.")
+    
     print("Odesílám data do OpenAI (gpt-4o)...", flush=True)
     prompt = f"""
-Jsi špičkový dispečerský asistent pro vrcholového manažera logistické společnosti Railtrans. 
-Zpracuj níže uvedenou e-mailovou komunikaci do **maximálně podrobného a strukturovaného provozního přehledu**.
-Všímej si mimořádností, problémů na tratích, stavu vlaků a klíčových informací.
+Jsi hlavní dispečerský analytik a špičkový operační asistent vrcholového manažera logistické společnosti Railtrans. 
+Zpracuj níže uvedenou e-mailovou komunikaci a data z příloh do **maximálně podrobného, vyčerpávajícího a přísně strukturovaného provozního přehledu**.
 
-Instrukce: {mode_description}
+Nebuď stručný! Vypíchněte konkrétní detaily:
+1. **Mimořádnosti, zpoždění a problémy na tratích** (konkrétní stanice, relace, čísla vlaků, důvody zpoždění).
+2. **Stav přeprav a obchodu** (aktivní poptávky, plnění kapacit, klíčoví partneři jako Gunvor, Metrans, DB apod.).
+3. **Finanční a nákladové anomálie** (vyčti z tabulek a příloh konkrétní čísla, vícenáklady, trassengebühren, diskuze nad fakturami).
+4. **Akční závěry a nutné kroky pro manažera**.
 
-Data k analýze:
+Instrukce pro tento režim: {mode_description}
+
+Reálná data z e-mailů a příloh k analýze:
 {'\n'.join(emails_text)}
 """
     try:
@@ -280,9 +286,9 @@ def process_command(command, chat_id):
     if days > 10: days = 10
 
     if cmd.startswith('r'):
-        send_telegram_message(chat_id, f"🚆 Generuji provozní přehled Railtrans za posledních {days} dnů...")
+        send_telegram_message(chat_id, f"🔍 Zahajuji zpracování: Hledám e-maily za posledních {days} dnů...")
         emails = get_emails_from_cache(days=days, chat_id=chat_id)
-        analysis = analyze_with_openai(emails, f"Provozní přehled Railtrans za {days} dnů: Seskup události, mimořádnosti a provozní stav.")
+        analysis = analyze_with_openai(emails, f"Provozní přehled Railtrans za {days} dnů: Seskup události, mimořádnosti a provozní stav.", chat_id=chat_id)
         send_telegram_message(chat_id, analysis[:4000])
         return
     else:
@@ -294,9 +300,9 @@ def automated_morning_railtrans_job():
     if not LAST_CHAT_ID: 
         return
     print("Spouštím automatické ranní shrnutí Railtrans v 8:00...", flush=True)
-    send_telegram_message(LAST_CHAT_ID, "🌅 **Dobré ráno! Zde je automatický přehled provozu Railtrans za posledních 24 hodin:**")
+    send_telegram_message(LAST_CHAT_ID, "🌅 **Dobré ráno! Spouštím automatické ranní shrnutí provozu Railtrans za posledních 24 hodin...**")
     emails = get_emails_from_cache(days=1, chat_id=LAST_CHAT_ID)
-    analysis = analyze_with_openai(emails, "Ranní dispečerský přehled Railtrans za posledních 24 hodin: Klíčové události, zpoždění, problémy a stav vlaků.")
+    analysis = analyze_with_openai(emails, "Ranní dispečerský přehled Railtrans za posledních 24 hodin: Klíčové události, zpoždění, problémy a stav vlaků.", chat_id=LAST_CHAT_ID)
     send_telegram_message(LAST_CHAT_ID, analysis[:4000])
 
 def run_telegram_bot():
