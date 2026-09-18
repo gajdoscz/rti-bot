@@ -42,7 +42,7 @@ def run_flask():
 def background_email_collector_job(days_to_fetch=2):
     """Rychle stahuje texty e-mailů do cache paměti."""
     global CACHED_EMAILS_DB
-    print(f"Spouštím sběr e-mailů do cache (okno: {days_to_fetch} dny)...", flush=True)
+    print(f"Spouštím rychlý sběr textů e-mailů do cache (okno: {days_to_fetch} dny)...", flush=True)
     try:
         socket.setdefaulttimeout(20)
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
@@ -203,7 +203,7 @@ def analyze_with_openai(emails_text, mode_description, chat_id=None):
     
     partial_summaries = []
     for idx, chunk in enumerate(chunks, 1):
-        print(Zpracovávám dávku {idx}/{len(chunks)}..., flush=True)
+        print(f"Zpracovávám dávku {idx}/{len(chunks)}...", flush=True)
         summary = call_openai_single(chunk, f"Část {idx}/{len(chunks)} - {mode_description}")
         partial_summaries.append(summary)
     
