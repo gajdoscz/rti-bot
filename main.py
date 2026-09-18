@@ -149,13 +149,15 @@ def get_emails_from_cache(days=1, chat_id=None):
     with CACHE_LOCK:
         is_empty = len(CACHED_EMAILS_DB) == 0
 
+    # Stahujeme z IMAPu pouze v případě, že je cache úplně prázdná
     if is_empty:
         if chat_id:
             send_telegram_message(chat_id, "📥 **Cache je prázdná.** Stahuji čerstvá data...")
         background_email_collector_job(days_to_fetch=days)
         
     with CACHE_LOCK:
-        return [item["content"] for item in CACHED_EMAILS_DB] if CACHED_EMAILS_DB else ["Žádné e-maily v paměti."]
+        all_emails = [item["content"] for item in CACHED_EMAILS_DB]
+        return all_emails if all_emails else ["Žádné e-maily v paměti."]
 
 def call_openai_single(text_chunk, mode_description):
     prompt = f"""
@@ -190,13 +192,11 @@ def analyze_with_openai(emails_text, mode_description, chat_id=None):
     combined_text = '\n'.join(emails_text)
     chunk_size = 35000  # Bezpečná velikost textu pro jeden požadavek pod limitem tokenů
     
-    # Pokud se data vejdou do jedné dávky, pošleme rovnou
     if len(combined_text) <= chunk_size:
         if chat_id:
             send_telegram_message(chat_id, "🧠 **Analyzuji data pomocí OpenAI (gpt-4o)...**")
         return call_openai_single(combined_text, mode_description)
     
-    # Jinak rozsekáme na dávky (chunking)
     chunks = [combined_text[i:i+chunk_size] for i in range(0, len(combined_text), chunk_size)]
     if chat_id:
         send_telegram_message(chat_id, f"📦 Objem dat je příliš velký, rozděleno do **{len(chunks)} dávek**. Zpracovávám postupně...")
