@@ -8,10 +8,7 @@ import email.utils
 from openai import OpenAI
 import requests
 import re
-import io
 import socket
-import pandas as pd
-import xml.etree.ElementTree as ET
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
 import threading
@@ -36,60 +33,16 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot je online a běží (Railtrans režim)!", 200
+    return "Bot je online a běží (Railtrans režim bez příloh)!", 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-def extract_attachment_text(part):
-    """Přečte Excelovou nebo CSV přílohu, ořízne ji na max 100 řádků kvůli tokenům."""
-    try:
-        filename = part.get_filename()
-        if not filename:
-            return ""
-        
-        decoded_header = decode_header(filename)
-        fname, encoding = decoded_header[0]
-        if isinstance(fname, bytes):
-            fname = fname.decode(encoding or "utf-8", errors="ignore")
-        
-        filename_lower = fname.lower()
-        payload = part.get_payload(decode=True)
-        if not payload:
-            return ""
-
-        file_bytes = io.BytesIO(payload)
-        attachment_text = f"\n[PŘÍLOHA: {fname}]\n"
-
-        if filename_lower.endswith(('.xlsx', '.xls')):
-            dfs = pd.read_excel(file_bytes, sheet_name=None, dtype=str)
-            for sheet_name, df in dfs.items():
-                attachment_text += f"--- List: {sheet_name} ---\n"
-                total_rows = len(df)
-                if total_rows > 100:
-                    df = df.head(100)
-                    attachment_text += df.to_string(index=False) + f"\n[... zkráceno na 100 z {total_rows} řádků ...]\n"
-                else:
-                    attachment_text += df.to_string(index=False) + "\n"
-        elif filename_lower.endswith('.csv'):
-            df = pd.read_csv(file_bytes, dtype=str)
-            total_rows = len(df)
-            if total_rows > 100:
-                df = df.head(100)
-                attachment_text += df.to_string(index=False) + f"\n[... zkráceno na 100 z {total_rows} řádků ...]\n"
-            else:
-                attachment_text += df.to_string(index=False) + "\n"
-        
-        return attachment_text
-    except Exception as e:
-        print(f"Chyba při čtení přílohy: {e}", flush=True)
-        return ""
-
 def background_email_collector_job(days_to_fetch=2):
-    """Stahuje a parsuje maily a ihned je ukládá do cache paměti."""
+    """Rychle stahuje pouze texty e-mailů do cache paměti bez zpracování příloh."""
     global CACHED_EMAILS_DB
-    print(f"Spouštím sběr e-mailů do cache (okno: {days_to_fetch} dny)...", flush=True)
+    print(f"Spouštím rychlý sběr textů e-mailů do cache (okno: {days_to_fetch} dny)...", flush=True)
     try:
         socket.setdefaulttimeout(20)
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
@@ -132,17 +85,14 @@ def background_email_collector_job(days_to_fetch=2):
                             subject = subject.decode(encoding or "utf-8", errors="ignore")
                         
                         body = ""
-                        attachments_text = ""
-
+                        # Čteme pouze čistý text zprávy, přílohy ignorujeme
                         if msg.is_multipart():
                             for part in msg.walk():
-                                content_disposition = str(part.get("Content-Disposition", ""))
-                                if part.get_content_type() == "text/plain" and "attachment" not in content_disposition:
+                                if part.get_content_type() == "text/plain" and not part.get("Content-Disposition"):
                                     payload = part.get_payload(decode=True)
                                     if payload:
                                         body = payload.decode("utf-8", errors="ignore")
-                                elif "attachment" in content_disposition or part.get_filename():
-                                    attachments_text += extract_attachment_text(part)
+                                        break
                         else:
                             payload = msg.get_payload(decode=True)
                             if payload:
@@ -151,7 +101,7 @@ def background_email_collector_job(days_to_fetch=2):
                         msg_id_str = e_id.decode('utf-8')
                         email_record = {
                             "id": msg_id_str,
-                            "content": f"Od: {sender} | Pro: {to_field} | Kopie: {cc_field}\nPředmět: {subject}\nObsah: {body[:600]}...\n{attachments_text}\n---"
+                            "content": f"Od: {sender} | Pro: {to_field} | Kopie: {cc_field}\nPředmět: {subject}\nObsah: {body[:1500]}\n---"
                         }
                         
                         with CACHE_LOCK:
@@ -163,12 +113,12 @@ def background_email_collector_job(days_to_fetch=2):
                 print(f"Chyba u zprávy: {inner_e}", flush=True)
                 continue
 
-            if idx % 20 == 0 or idx == total_msgs:
+            if idx % 50 == 0 or idx == total_msgs:
                 print(f"Zpracováno {idx}/{total_msgs} zpráv...", flush=True)
 
-        if len(CACHED_EMAILS_DB) > 1200:
+        if len(CACHED_EMAILS_DB) > 1500:
             with CACHE_LOCK:
-                CACHED_EMAILS_DB = CACHED_EMAILS_DB[-1200:]
+                CACHED_EMAILS_DB = CACHED_EMAILS_DB[-1500:]
 
         mail.logout()
         print(f"Sběr dokončen. Celkem v paměti: {len(CACHED_EMAILS_DB)} zpráv.", flush=True)
@@ -196,14 +146,14 @@ def check_vip_alerts(new_emails):
                 break
 
 def get_emails_from_cache(days=1, chat_id=None):
-    """Vrátí maily z cache. Pokud je cache prázdná, provede nouzové stažení."""
+    """Vrátí maily z cache. Pokud je prázdná, ihned stáhne."""
     global CACHED_EMAILS_DB
     with CACHE_LOCK:
         is_empty = len(CACHED_EMAILS_DB) == 0
 
     if is_empty:
         if chat_id:
-            send_telegram_message(chat_id, "📥 **Cache je prázdná.** Připojuji se k IMAPu a stahuji aktuální e-maily...")
+            send_telegram_message(chat_id, "📥 **Cache je prázdná.** Stahuji čerstvá data...")
         background_email_collector_job(days_to_fetch=days)
         
     with CACHE_LOCK:
@@ -211,22 +161,21 @@ def get_emails_from_cache(days=1, chat_id=None):
 
 def analyze_with_openai(emails_text, mode_description, chat_id=None):
     if chat_id:
-        send_telegram_message(chat_id, "🧠 **Analyzuji data pomocí OpenAI (gpt-4o)...** Připravuji hloubkový přehled.")
+        send_telegram_message(chat_id, "🧠 **Analyzuji data pomocí OpenAI (gpt-4o)...**")
     
     print("Odesílám data do OpenAI (gpt-4o)...", flush=True)
     prompt = f"""
 Jsi hlavní dispečerský analytik a špičkový operační asistent vrcholového manažera logistické společnosti Railtrans. 
-Zpracuj níže uvedenou e-mailovou komunikaci a data z příloh do **maximálně podrobného, vyčerpávajícího a přísně strukturovaného provozního přehledu**.
+Zpracuj níže uvedenou e-mailovou komunikaci do **maximálně podrobného, vyčerpávajícího a přísně strukturovaného provozního přehledu**.
 
-Nebuď stručný! Vypíchněte konkrétní detaily:
-1. **Mimořádnosti, zpoždění a problémy na tratích** (konkrétní stanice, relace, čísla vlaků, důvody zpoždění).
-2. **Stav přeprav a obchodu** (aktivní poptávky, plnění kapacit, klíčoví partneři jako Gunvor, Metrans, DB apod.).
-3. **Finanční a nákladové anomálie** (vyčti z tabulek a příloh konkrétní čísla, vícenáklady, trassengebühren, diskuze nad fakturami).
-4. **Akční závěry a nutné kroky pro manažera**.
+Vypíchněte konkrétní detaily:
+1. **Mimořádnosti, zpoždění a problémy na tratích** (stanice, relace, čísla vlaků, důvody).
+2. **Stav přeprav a obchodu** (poptávky, kapacity, partneři jako Gunvor, Metrans, DB apod.).
+3. **Klíčové provozní informace a akční závěry pro manažera**.
 
 Instrukce pro tento režim: {mode_description}
 
-Reálná data z e-mailů a příloh k analýze:
+Reálná data z e-mailů k analýze:
 {'\n'.join(emails_text)}
 """
     try:
@@ -295,7 +244,6 @@ def process_command(command, chat_id):
         send_telegram_message(chat_id, f"Neznámý příkaz: {cmd}. Napiš 'help'.")
 
 def automated_morning_railtrans_job():
-    """Automatické ranní hlášení v 8:00 za posledních 24 hodin."""
     global LAST_CHAT_ID
     if not LAST_CHAT_ID: 
         return
@@ -331,7 +279,7 @@ def run_telegram_bot():
     except Exception:
         pass
 
-    print("Bot je plně online a poslouchá Telegram (Railtrans režim)...", flush=True)
+    print("Bot je plně online a poslouchá Telegram (Railtrans režim bez příloh)...", flush=True)
 
     while True:
         try:
