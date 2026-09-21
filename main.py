@@ -33,7 +33,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot je online a běží (Railtrans dávkový režim)!", 200
+    return "Bot je online a běží (Railtrans ostrý dispečerský režim)!", 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -149,7 +149,6 @@ def get_emails_from_cache(days=1, chat_id=None):
     with CACHE_LOCK:
         is_empty = len(CACHED_EMAILS_DB) == 0
 
-    # Stahujeme z IMAPu pouze v případě, že je cache úplně prázdná
     if is_empty:
         if chat_id:
             send_telegram_message(chat_id, "📥 **Cache je prázdná.** Stahuji čerstvá data...")
@@ -159,15 +158,39 @@ def get_emails_from_cache(days=1, chat_id=None):
         all_emails = [item["content"] for item in CACHED_EMAILS_DB]
         return all_emails if all_emails else ["Žádné e-maily v paměti."]
 
+def ask_openai_direct(emails_text, user_query):
+    """Pro volné dotazy (např. 'najdi pozvánku do tenderu') zacílí přímo na data."""
+    combined_text = '\n'.join(emails_text[-300:]) # Vezmeme nejnovějších 300 zpráv pro rychlost a přesnost
+    prompt = f"""
+Jsi ostrý a přímý provozní asistent dispečinku Railtrans. Odpověz na uživatelův dotaz stručně, věcně, s konkrétními detaily (jména, čísla vlaků, relace, termíny). Žádné obecné poučky.
+
+Uživatel se ptá: "{user_query}"
+
+E-mailová data k dispozici:
+{combined_text}
+"""
+    try:
+        response = ai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Jsi věcný dispečerský asistent pro top management. Piš rovnou k věci."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            max_tokens=1500
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Chyba při OpenAI: {e}"
+
 def call_openai_single(text_chunk, mode_description):
     prompt = f"""
-Jsi hlavní dispečerský analytik a špičkový operační asistent vrcholového manažera logistické společnosti Railtrans. 
-Zpracuj níže uvedenou e-mailovou komunikaci do **podrobného a strukturovaného provozního přehledu**.
+Jsi hlavní dispečerský analytik logistické společnosti Railtrans. Tvojí úlohou je podat **stručný, tvrdý a věcný přehled pro šéfa** (žádné učebnicové poučky, žádné obecné fráze, piš jako ostřílený dispečer).
 
-Vypíchněte konkrétní detaily:
-1. **Mimořádnosti, zpoždění a problémy na tratích** (stanice, relace, čísla vlaků, důvody).
-2. **Stav přeprav a obchodu** (poptávky, kapacity, partneři jako Gunvor, Metrans, DB apod.).
-3. **Klíčové provozní informace a akční závěry pro manažera**.
+Vypíchněte pouze to podstatné:
+1. **Akutní problémy a zpoždění** (konkrétní stanice, relace, čísla vlaků, neschopnosti lokomotiv).
+2. **Čekající reakce a urgence** (kdo urgentně píše a nikdo nereaguje, nové VOP, smluvní změny).
+3. **Obchodní příležitosti a poptávky** (tendry, pozvánky, nabídky od partnerů jako Gunvor, Metrans, DB).
 
 Instrukce: {mode_description}
 
@@ -178,11 +201,11 @@ Data:
         response = ai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Jsi věcný, kritický a nekompromisní asistent pro top management."},
+                {"role": "system", "content": "Jsi nekompromisní provozní šéf. Žádné omáčky, jen tvrdá fakta a urgence."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            max_tokens=2500
+            max_tokens=1500
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -190,16 +213,16 @@ Data:
 
 def analyze_with_openai(emails_text, mode_description, chat_id=None):
     combined_text = '\n'.join(emails_text)
-    chunk_size = 35000  # Bezpečná velikost textu pro jeden požadavek pod limitem tokenů
+    chunk_size = 35000  
     
     if len(combined_text) <= chunk_size:
         if chat_id:
-            send_telegram_message(chat_id, "🧠 **Analyzuji data pomocí OpenAI (gpt-4o)...**")
+            send_telegram_message(chat_id, "🧠 **Analyzuji data (hledám urgence, problémy a tendry)...**")
         return call_openai_single(combined_text, mode_description)
     
     chunks = [combined_text[i:i+chunk_size] for i in range(0, len(combined_text), chunk_size)]
     if chat_id:
-        send_telegram_message(chat_id, f"📦 Objem dat je příliš velký, rozděleno do **{len(chunks)} dávek**. Zpracovávám postupně...")
+        send_telegram_message(chat_id, f"📦 Zpracovávám rozsáhlý archiv v **{len(chunks)} dávkách**...")
     
     partial_summaries = []
     for idx, chunk in enumerate(chunks, 1):
@@ -208,19 +231,19 @@ def analyze_with_openai(emails_text, mode_description, chat_id=None):
         partial_summaries.append(summary)
     
     if chat_id:
-        send_telegram_message(chat_id, "🔗 **Syntetizuji závěrečný souhrn** ze všech dávek dohromady...")
+        send_telegram_message(chat_id, "🔗 **Kompletuji přehled pro management...**")
     
-    synthesis_prompt = f"Spoj a strukturuj následující dílčí analýzy (dávky 1 až {len(chunks)}) do jednoho finálního, vyčerpávajícího přehledu pro manažera:\n\n" + "\n\n--- DALŠÍ ČÁST ---\n\n".join(partial_summaries)
+    synthesis_prompt = f"Spoj následující dílčí poznatky do jednoho stručného, úderného manažerského přehledu (vypíchni urgence, problémy na tratích a obchody):\n\n" + "\n\n--- DALŠÍ ČÁST ---\n\n".join(partial_summaries)
     
     try:
         response = ai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Jsi věcný, kritický a nekompromisní asistent pro top management. Syntetizuj data do přehledného celku."},
+                {"role": "system", "content": "Jsi nekompromisní provozní šéf. Sestav úderný přehled bez vat."},
                 {"role": "user", "content": synthesis_prompt}
             ],
             temperature=0.1,
-            max_tokens=3000
+            max_tokens=2000
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -242,7 +265,7 @@ def process_command(command, chat_id):
     print(f"Zpracovávám příkaz: {cmd}", flush=True)
     
     if "help" in cmd or "pomoc" in cmd:
-        send_telegram_message(chat_id, "Dostupné příkazy:\n- **r1** až **r10**: Provozní přehled Railtrans za 1 až 10 dnů\n- **vip**: Zobrazit sledovaná VIP\n- **pridejvip [jméno]**: Přidat VIP\n- **smazvip [jméno]**: Smazat VIP")
+        send_telegram_message(chat_id, "Dostupné příkazy:\n- **r1** až **r10**: Provozní přehled (urgence, tratě, obchody)\n- **vip**: Zobrazit sledovaná VIP\n- **pridejvip [jméno]**: Přidat VIP\n- **smazvip [jméno]**: Smazat VIP\n\n*Nebo mi sem napiš libovolný dotaz (např. 'najdi pozvánku do tenderu' nebo 'co píše Gunvor') a já to v e-mailech vyhledám!*")
         return
 
     if cmd.startswith("pridejvip"):
@@ -268,35 +291,48 @@ def process_command(command, chat_id):
     days = int(nums[0]) if nums else 1
     if days > 10: days = 10
 
-    if cmd.startswith('r'):
-        send_telegram_message(chat_id, f"🔍 Zahajuji zpracování: Hledám e-maily za posledních {days} dnů...")
+    # Pokud příkaz začíná na 'r' a je to čistě report za X dnů (např. r1, r2...)
+    if cmd.startswith('r') and len(cmd) <= 4 and nums:
+        send_telegram_message(chat_id, f"🔍 Skenuji provoz za posledních {days} dnů...")
         emails = get_emails_from_cache(days=days, chat_id=chat_id)
-        analysis = analyze_with_openai(emails, f"Provozní přehled Railtrans za {days} dnů: Seskup události, mimořádnosti a provozní stav.", chat_id=chat_id)
+        analysis = analyze_with_openai(emails, f"Provozní přehled Railtrans za {days} dnů. Zaměř se na urgence, zpoždění a obchody.", chat_id=chat_id)
         send_telegram_message(chat_id, analysis[:4000])
         return
     else:
-        send_telegram_message(chat_id, f"Neznámý příkaz: {cmd}. Napiš 'help'.")
+        # JAKÝKOLIV JINÝ TEXTOVÝ DOTAZ (např. "najdi pozvánku do tenderu")
+        send_telegram_message(chat_id, f"🔎 Hledám v e-mailech na dotaz: *{command}*...")
+        emails = get_emails_from_cache(days=3, chat_id=chat_id) # Prohledáme poslední 3 dny
+        answer = ask_openai_direct(emails, command)
+        send_telegram_message(chat_id, answer[:4000])
 
 def automated_morning_railtrans_job():
     global LAST_CHAT_ID
     if not LAST_CHAT_ID: 
         return
     print("Spouštím automatické ranní shrnutí Railtrans v 8:00...", flush=True)
-    send_telegram_message(LAST_CHAT_ID, "🌅 **Dobré ráno! Spouštím automatické ranní shrnutí provozu Railtrans za posledních 24 hodin...**")
+    send_telegram_message(LAST_CHAT_ID, "🌅 **Ranní dispečerský briefing (za posledních 24h):**")
     emails = get_emails_from_cache(days=1, chat_id=LAST_CHAT_ID)
-    analysis = analyze_with_openai(emails, "Ranní dispečerský přehled Railtrans za posledních 24 hodin: Klíčové události, zpoždění, problémy a stav vlaků.", chat_id=LAST_CHAT_ID)
+    analysis = analyze_with_openai(emails, "Ranní přehled za 24h: Urgence, zpoždění, neschopnosti lokomotiv, nové tendry a obchody.", chat_id=LAST_CHAT_ID)
     send_telegram_message(LAST_CHAT_ID, analysis[:4000])
 
 def run_telegram_bot():
     cleaned_token = TELEGRAM_BOT_TOKEN.strip()
     print("Inicializuji APScheduler a Flask server...", flush=True)
+    
+    try:
+        del_url = f"https://api.telegram.org/bot{cleaned_token}/deleteWebhook?drop_pending_updates=true"
+        requests.get(del_url, timeout=5)
+        print("Webhook úspěšně vyčištěn, kanál je volný pro getUpdates.", flush=True)
+    except Exception as e:
+        print(f"Pozor při mazání webhooku: {e}", flush=True)
+
     try:
         scheduler = BackgroundScheduler()
         scheduler.add_job(automated_morning_railtrans_job, 'cron', hour=8, minute=0)
         scheduler.add_job(background_email_collector_job, 'interval', minutes=15)
         scheduler.start()
     except Exception as e:
-        print(f"Chyba při startu scheduleru: {e}", flush=True)
+        print(f"Chyba při startu scheduleru: {e}", trim=True)
 
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
@@ -313,7 +349,7 @@ def run_telegram_bot():
     except Exception:
         pass
 
-    print("Bot je plně online a poslouchá Telegram (Railtrans dávkový režim)...", flush=True)
+    print("Bot je plně online a poslouchá Telegram (dispečerský režim s volnými dotazy)...", flush=True)
 
     while True:
         try:
