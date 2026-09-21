@@ -159,14 +159,28 @@ def get_emails_from_cache(days=1, chat_id=None):
         return all_emails if all_emails else ["Žádné e-maily v paměti."]
 
 def ask_openai_direct(emails_text, user_query):
-    """Pro volné dotazy prohledá kompletní texty z cache."""
-    combined_text = '\n'.join(emails_text) # Prohledáme kompletně celou cache
+    """Chytré filtrování: Vybere maily odpovídající dotazu, aby nedošlo k překročení tokenů."""
+    query_words = [w.lower() for w in user_query.split() if len(w) > 2]
+    
+    relevant_emails = []
+    for email_str in emails_text:
+        if any(w in email_str.lower() for w in query_words):
+            relevant_emails.append(email_str)
+            
+    # Pokud klíčová slova nic specifického nenajdou, vezmeme posledních 250 zpráv
+    if not relevant_emails:
+        relevant_emails = emails_text[-250:]
+    else:
+        relevant_emails = relevant_emails[-250:]
+        
+    combined_text = '\n'.join(relevant_emails)
+    
     prompt = f"""
-Jsi ostrý a přímý provozní asistent dispečinku Railtrans. Odpověz na uživatelův dotaz stručně, věcně, s konkrétními detaily (jména odesílatelů, předměty, čísla vlaků, relace, termíny). Pokud e-mail existuje, vymažte detaily a vypiš je.
+Jsi ostrý a přímý provozní asistent dispečinku Railtrans. Odpověz na uživatelův dotaz stručně, věcně, s konkrétními detaily (jména odesílatelů, předměty, čísla vlaků, relace, termíny).
 
 Uživatel se ptá: "{user_query}"
 
-Kompletní e-mailová data k dispozici:
+Filtrovaná e-mailová data k dispozici:
 {combined_text}
 """
     try:
@@ -265,7 +279,7 @@ def process_command(command, chat_id):
     print(f"Zpracovávám příkaz: {cmd}", flush=True)
     
     if "help" in cmd or "pomoc" in cmd:
-        send_telegram_message(chat_id, "Dostupné příkazy:\n- **r1** až **r10**: Provozní přehled (urgence, tratě, obchody)\n- **vip**: Zobrazit sledovaná VIP\n- **pridejvip [jméno]**: Přidat VIP\n- **smazvip [jméno]**: Smazat VIP\n\n*Nebo mi sem napiš libovolný dotaz (např. 'najdi pozvánku do tenderu' nebo 'co píše Gunvor') a já to v e-mailech vyhledám!*")
+        send_telegram_message(chat_id, "Dostupné příkazy:\n- **r1** až **r10**: Provozní přehled (urgence, tratě, obchody)\n- **vip**: Zobrazit sledovaná VIP\n- **pridejvip [jméno]**: Přidat VIP\n- **smazvip [jméno]**: Smazat VIP\n\n*Nebo mi sem napiš libovolný dotaz (např. 'najdi pozvánku do tenderu' nebo 'co píše Metrans') a já to vyhledám!*")
         return
 
     if cmd.startswith("pridejvip"):
