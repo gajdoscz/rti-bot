@@ -39,7 +39,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot je online a běží (Railtrans ostrý dispečerský režim)!", 200
+    return "Bot je online a běží (RTI CEO dispečerský režim)!", 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -187,7 +187,7 @@ def ask_openai_direct(emails_text, user_query):
     combined_text = '\n'.join(relevant_emails)
     
     prompt = f"""
-Jsi ostrý a přímý provozní asistent dispečinku Railtrans. Úkolem je vyhledat v datech přesné informace na uživatelův dotaz.
+Jsi seniorní manažerský analytik pro železniční nákladní dopravu a asistent CEO společnosti RTI DE/AT. Úkolem je vyhledat v datech přesné informace na uživatelův dotaz.
 NIKDY nedávej obecné rady ani doporučení, komu se ozvat. Pokud data obsahují odpověď, vypiš ji (odesílatel, předmět, klíčové body, termíny). Pokud data neodpovídají, suše napiš, že v e-mailech nic takového není.
 
 Uživatel se ptá: "{user_query}"
@@ -199,7 +199,7 @@ Filtrovaná e-mailová data k dispozici:
         response = ai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Jsi nekompromisní dispečerský asistent. Žádné rady, jen fakta z e-mailů."},
+                {"role": "system", "content": "Jsi nekompromisní asistent pro CEO. Žádné rady, jen fakta z e-mailů."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
@@ -209,42 +209,135 @@ Filtrovaná e-mailová data k dispozici:
     except Exception as e:
         return f"Chyba při OpenAI: {e}"
 
-def call_openai_single(text_chunk, mode_description):
-    prompt = f"""
-Jsi hlavní dispečerský analytik logistické společnosti Railtrans. Tvojí úlohou je podat **stručný, tvrdý a věcný přehled pro šéfa** (žádné učebnicové poučky, žádné obecné fráze, piš jako ostřílený dispečer).
+def call_openai_manager_prompt(text_chunk, days_range):
+    """Využívá tvůj detailní MANAGER_PROMPT pro hloubkové reporty r1-r10."""
+    manager_prompt_template = f"""
+Jsi seniorní manažerský analytik pro železniční nákladní dopravu a CEO společnosti RTI DE/AT.
 
-Vypíchněte pouze to podstatné:
-1. **Akutní problémy a zpoždění** (konkrétní stanice, relace, čísla vlaků, neschopnosti lokomotiv).
-2. **Čekající reakce a urgence** (kdo urgentně píše a nikdo nereaguje, nové VOP, smluvní změny).
-3. **Obchodní příležitosti a poptávky** (tendry, pozvánky, nabídky od partnerů).
+Analyzuj všechny níže vložené e-maily za posledních {days_range} dnů. E-maily mohou obsahovat duplicitní odpovědi v jednom vlákně, automatické odpovědi, přílohy, provozní hlášení a nerelevantní zprávy.
 
-Instrukce: {mode_description}
+Cíl:
+Vytvoř stručný, přesný a prakticky použitelný manažerský výtah pro CEO. Neopisuj e-maily jeden po druhém. Spojuj související zprávy do jednotlivých témat a odstraň duplicity.
 
-Data:
+Piš česky. Zachovej názvy vlaků, zákazníků, lokomotiv, stanic, částky, termíny a referenční čísla přesně podle e-mailů.
+
+Hodnocení každé informace:
+- KRITICKÉ: vyžaduje okamžité rozhodnutí nebo může způsobit významnou ztrátu, provozní výpadek, bezpečnostní problém či reputační škodu.
+- DŮLEŽITÉ: vyžaduje sledování nebo rozhodnutí v nejbližších dnech.
+- INFORMAČNÍ: pouze doplňková informace bez nutné akce.
+
+Zaměř se hlavně na:
+1. provozní výpadky, zpoždění, výluky a kapacitu tras,
+2. dostupnost a poruchy lokomotiv,
+3. bezpečnost, nehody, poškozené vozy a reklamace,
+4. zákazníky, ztracené nebo ohrožené přepravy,
+5. nové obchodní příležitosti, tendry a termíny nabídek,
+6. vícenáklady, storna, odmítnuté náklady a dopad na EBITDA,
+7. trakční elektřinu, spotové a fixní ceny,
+8. zaměstnance, pracovní dobu, absence a nedostatek personálu,
+9. právní, organizační a regulatorní změny,
+10. témata týkající se Metrans, RTI DE/AT a skupiny RTI.
+
+U každého významného tématu uveď:
+- Nadpis tématu
+- Prioritu: KRITICKÉ / DŮLEŽITÉ / INFORMAČNÍ
+- Co se stalo
+- Proč je to důležité pro RTI nebo CEO
+- Finanční, provozní nebo strategický dopad
+- Co je již vyřešeno
+- Co stále chybí zjistit
+- Doporučený další krok
+- Odpovědnou osobu, pokud ji lze z e-mailů určit
+- Termín nebo deadline
+- Odkaz na původní e-mail podle odesílatele, předmětu a data
+
+Přísná pravidla:
+- Nic si nevymýšlej.
+- Pokud informace není z e-mailů jistá, napiš „nelze potvrdit z dostupných e-mailů“.
+- Jasně odlišuj skutečnost, pravděpodobný závěr a doporučení.
+- Nezaměňuj přijatý e-mail za potvrzené rozhodnutí.
+- Neuváděj automatické odpovědi, newslettery, cestovní rezervace, běžné Track & Trace a rutinní provozní komunikaci, pokud nemají manažerský význam.
+- Duplicitní e-maily stejného vlákna shrň pouze jednou.
+- Pokud je v jednom vlákně vývoj události, popiš stručně začátek, aktuální stav a poslední známé rozhodnutí.
+- Částky uváděj v původní měně.
+- Pokud je možné vyčíslit dopad, uveď částku nebo alespoň směr dopadu.
+- Pokud existuje konflikt mezi e-maily, upozorni na něj.
+
+Výstup vytvoř v této struktuře:
+
+# Manažerský výtah za období posledních {days_range} dnů
+
+## 1. Jednověté shrnutí týdne
+Maximálně 5 vět s nejdůležitějšími závěry.
+
+## 2. Co vyžaduje rozhodnutí CEO
+Tabulka:
+| Priorita | Téma | Požadované rozhodnutí | Doporučení | Termín |
+
+## 3. Kritická rizika
+Tabulka:
+| Riziko | Dopad | Pravděpodobnost | Aktuální stav | Mitigační opatření |
+
+## 4. Provoz a lokomotivy
+Shrň pouze významné problémy, výpadky, zpoždění, kapacitu a dopad na oběhy.
+
+## 5. Finance a vícenáklady
+Uveď konkrétní částky, zákazníky, příčiny, sporné položky a možný dopad do EBITDA.
+
+## 6. Obchod a zákazníci
+Rozděl na:
+- ohrožené nebo ztracené výkony,
+- nové obchodní příležitosti,
+- nabídky s deadlinem,
+- příležitosti vyžadující rozhodnutí o kapacitě nebo ceně.
+
+## 7. Energie
+Uveď změny cen, jejich význam pro RTI a doporučení k nákupu nebo fixaci.
+
+## 8. Personál, bezpečnost a právní témata
+Shrň jen věci s dopadem na řízení společnosti.
+
+## 9. Úkoly na tento týden
+Tabulka:
+| Úkol | Odpovědná osoba | Termín | Důvod | Priorita |
+
+## 10. Co sledovat, ale nyní neřešit
+Maximálně 10 bodů.
+
+## 11. Chybějící informace
+Uveď, které důležité závěry nelze potvrdit pouze z dostupných e-mailů a jaké podklady je třeba získat.
+
+Na konci přidej:
+## Nejkratší CEO briefing
+Pět odrážek, které lze přečíst do dvou minut.
+
+Níže následují analyzované e-maily:
+--------------------
 {text_chunk}
+--------------------
 """
     try:
         response = ai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Jsi nekompromisní provozní šéf. Žádné omáčky, jen tvrdá fakta a urgence."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": "Jsi top manažerský analytik pro CEO železniční společnosti. Piš přesně podle zadané struktury."},
+                {"role": "user", "content": manager_prompt_template}
             ],
             temperature=0.1,
-            max_tokens=1500
+            max_tokens=3000
         )
         return response.choices[0].message.content
     except Exception as e:
         return f"Chyba při OpenAI: {e}"
 
-def analyze_with_openai(emails_text, mode_description, chat_id=None):
+def analyze_with_openai(emails_text, days_range, chat_id=None):
     combined_text = '\n'.join(emails_text)
     chunk_size = 35000  
     
     if len(combined_text) <= chunk_size:
         if chat_id:
-            send_telegram_message(chat_id, "🧠 **Analyzuji data (hledám urgence, problémy a tendry)...**")
-        return call_openai_single(combined_text, mode_description)
+            send_telegram_message(chat_id, "🧠 **Generuji manažerský výtah pro CEO...**")
+        return call_openai_manager_prompt(combined_text, days_range)
     
     chunks = [combined_text[i:i+chunk_size] for i in range(0, len(combined_text), chunk_size)]
     if chat_id:
@@ -253,23 +346,23 @@ def analyze_with_openai(emails_text, mode_description, chat_id=None):
     partial_summaries = []
     for idx, chunk in enumerate(chunks, 1):
         print(f"Zpracovávám dávku {idx}/{len(chunks)}...", flush=True)
-        summary = call_openai_single(chunk, f"Část {idx}/{len(chunks)} - {mode_description}")
+        summary = call_openai_manager_prompt(chunk, days_range)
         partial_summaries.append(summary)
     
     if chat_id:
-        send_telegram_message(chat_id, "🔗 **Kompletuji přehled pro management...**")
+        send_telegram_message(chat_id, "🔗 **Kompletuji finální CEO briefing...**")
     
-    synthesis_prompt = f"Spoj následující dílčí poznatky do jednoho stručného, úderného manažerského přehledu (vypíchni urgence, problémy na tratích a obchody):\n\n" + "\n\n--- DALŠÍ ČÁST ---\n\n".join(partial_summaries)
+    synthesis_prompt = f"Spoj následující dílčí manažerské analýzy do jednoho celkového strukturovaného výtahu pro CEO podle zadané šablony:\n\n" + "\n\n--- DALŠÍ ČÁST ---\n\n".join(partial_summaries)
     
     try:
         response = ai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Jsi nekompromisní provozní šéf. Sestav úderný přehled bez vat."},
+                {"role": "system", "content": "Jsi špičkový manažerský analytik. Sestav finální strukturovaný report pro CEO."},
                 {"role": "user", "content": synthesis_prompt}
             ],
             temperature=0.1,
-            max_tokens=2000
+            max_tokens=3500
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -292,7 +385,7 @@ def process_command(command, chat_id):
     
     if "help" in cmd or "pomoc" in cmd:
         vip_str = ", ".join(VIP_WATCH_LIST)
-        send_telegram_message(chat_id, f"Dostupné příkazy:\n- **r1** až **r10**: Provozní přehled (urgence, tratě, obchody)\n- **vip**: Zobrazit sledovaná VIP\n- **pridejvip [jméno]**: Přidat VIP\n- **smazvip [jméno]**: Smazat VIP\n\n*Sledovaná VIP:* {vip_str}\n\n*Nebo mi sem napiš libovolný dotaz (např. 'smlouva DB', 'pozvánka do tenderu' nebo 'co píše Rapant') a já to vyhledám!*")
+        send_telegram_message(chat_id, f"Dostupné příkazy:\n- **r1** až **r10**: Kompletní manažerský výtah pro CEO\n- **vip**: Zobrazit sledovaná VIP\n- **pridejvip [jméno]**: Přidat VIP\n- **smazvip [jméno]**: Smazat VIP\n\n*Sledovaná VIP:* {vip_str}\n\n*Nebo mi sem napiš libovolný dotaz (např. 'smlouva DB', 'pozvánka do tenderu' nebo 'co píše Rapant') a já to vyhledám!*")
         return
 
     if cmd.startswith("pridejvip"):
@@ -319,9 +412,9 @@ def process_command(command, chat_id):
     if days > 10: days = 10
 
     if cmd.startswith('r') and len(cmd) <= 4 and nums:
-        send_telegram_message(chat_id, f"🔍 Skenuji provoz za posledních {days} dnů...")
+        send_telegram_message(chat_id, f"🔍 Generuji manažerský výtah za posledních {days} dnů...")
         emails = get_emails_from_cache(days=days, chat_id=chat_id)
-        analysis = analyze_with_openai(emails, f"Provozní přehled Railtrans za {days} dnů. Zaměř se na urgence, zpoždění a obchody.", chat_id=chat_id)
+        analysis = analyze_with_openai(emails, days_range=days, chat_id=chat_id)
         send_telegram_message(chat_id, analysis[:4000])
         return
     else:
@@ -335,9 +428,9 @@ def automated_morning_railtrans_job():
     if not LAST_CHAT_ID: 
         return
     print("Spouštím automatické ranní shrnutí Railtrans v 8:00...", flush=True)
-    send_telegram_message(LAST_CHAT_ID, "🌅 **Ranní dispečerský briefing (za posledních 24h):**")
+    send_telegram_message(LAST_CHAT_ID, "🌅 **Ranní CEO briefing (za posledních 24h):**")
     emails = get_emails_from_cache(days=1, chat_id=LAST_CHAT_ID)
-    analysis = analyze_with_openai(emails, "Ranní přehled za 24h: Urgence, zpoždění, neschopnosti lokomotiv, nové tendry a obchody.", chat_id=LAST_CHAT_ID)
+    analysis = analyze_with_openai(emails, days_range=1, chat_id=LAST_CHAT_ID)
     send_telegram_message(LAST_CHAT_ID, analysis[:4000])
 
 def run_telegram_bot():
@@ -374,7 +467,7 @@ def run_telegram_bot():
     except Exception:
         pass
 
-    print("Bot je plně online a poslouchá Telegram (dispečerský režim s volnými dotazy)...", flush=True)
+    print("Bot je plně online a poslouchá Telegram (CEO manažerský režim)...", flush=True)
 
     while True:
         try:
