@@ -159,25 +159,25 @@ def get_emails_from_cache(days=1, chat_id=None):
         return all_emails if all_emails else ["Žádné e-maily v paměti."]
 
 def ask_openai_direct(emails_text, user_query):
-    """Pro volné dotazy (např. 'najdi pozvánku do tenderu') zacílí přímo na data."""
-    combined_text = '\n'.join(emails_text[-300:]) # Vezmeme nejnovějších 300 zpráv pro rychlost a přesnost
+    """Pro volné dotazy prohledá kompletní texty z cache."""
+    combined_text = '\n'.join(emails_text) # Prohledáme kompletně celou cache
     prompt = f"""
-Jsi ostrý a přímý provozní asistent dispečinku Railtrans. Odpověz na uživatelův dotaz stručně, věcně, s konkrétními detaily (jména, čísla vlaků, relace, termíny). Žádné obecné poučky.
+Jsi ostrý a přímý provozní asistent dispečinku Railtrans. Odpověz na uživatelův dotaz stručně, věcně, s konkrétními detaily (jména odesílatelů, předměty, čísla vlaků, relace, termíny). Pokud e-mail existuje, vymažte detaily a vypiš je.
 
 Uživatel se ptá: "{user_query}"
 
-E-mailová data k dispozici:
+Kompletní e-mailová data k dispozici:
 {combined_text}
 """
     try:
         response = ai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Jsi věcný dispečerský asistent pro top management. Piš rovnou k věci."},
+                {"role": "system", "content": "Jsi věcný dispečerský asistent pro top management. Piš rovnou k věci a čerpej přesně z poskytnutých dat."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            max_tokens=1500
+            max_tokens=2000
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -291,7 +291,6 @@ def process_command(command, chat_id):
     days = int(nums[0]) if nums else 1
     if days > 10: days = 10
 
-    # Pokud příkaz začíná na 'r' a je to čistě report za X dnů (např. r1, r2...)
     if cmd.startswith('r') and len(cmd) <= 4 and nums:
         send_telegram_message(chat_id, f"🔍 Skenuji provoz za posledních {days} dnů...")
         emails = get_emails_from_cache(days=days, chat_id=chat_id)
@@ -299,9 +298,8 @@ def process_command(command, chat_id):
         send_telegram_message(chat_id, analysis[:4000])
         return
     else:
-        # JAKÝKOLIV JINÝ TEXTOVÝ DOTAZ (např. "najdi pozvánku do tenderu")
         send_telegram_message(chat_id, f"🔎 Hledám v e-mailech na dotaz: *{command}*...")
-        emails = get_emails_from_cache(days=3, chat_id=chat_id) # Prohledáme poslední 3 dny
+        emails = get_emails_from_cache(days=3, chat_id=chat_id)
         answer = ask_openai_direct(emails, command)
         send_telegram_message(chat_id, answer[:4000])
 
@@ -332,7 +330,7 @@ def run_telegram_bot():
         scheduler.add_job(background_email_collector_job, 'interval', minutes=15)
         scheduler.start()
     except Exception as e:
-        print(f"Chyba při startu scheduleru: {e}", trim=True)
+        print(f"Chyba při startu scheduleru: {e}", flush=True)
 
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
